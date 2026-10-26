@@ -1,0 +1,54 @@
+openapi: 3.0.3
+info:
+  title: Catalog Sandbox API
+  version: 1.0.0
+paths:
+  /products:
+    get:
+      summary: List products
+      responses:
+        '200':
+          description: Product list
+    post:
+      summary: Create a product
+      description: Name is required. Price can be zero (free product).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductInput'
+      responses:
+        '201':
+          description: Product created
+        '400':
+          description: Invalid name, missing field, or price below zero
+  /products/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+    get:
+      summary: Get a product by identifier
+      responses:
+        '200':
+          description: Product exists
+        '404':
+          description: Product does not exist
+components:
+  schemas:
+    ProductInput:
+      type: object
+      required: [name, price]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          example: Mechanical Keyboard
+        price:
+          type: number
+          minimum: 0
+          example: 79.0
