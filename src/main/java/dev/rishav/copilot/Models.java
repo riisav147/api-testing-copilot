@@ -19,7 +19,7 @@ public final class Models {
             @NotBlank String method, @NotBlank String path, @NotNull Map<String,String> query,
             JsonNode body, @Min(100) @Max(599) int expectedStatus,
             @NotBlank String rationale, @NotEmpty List<String> sourceIds) {}
-    public record Draft(@NotEmpty @Size(max=12) List<@jakarta.validation.Valid Scenario> scenarios) {}
+    public record Draft(@NotEmpty @Size(max=12) List<@NotNull @jakarta.validation.Valid Scenario> scenarios) {}
     public record Evaluation(int total, Map<Category,Long> categoryCounts,
                              double categoryCoverage, double sourceCitationCoverage,
                              List<String> warnings) {}

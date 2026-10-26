@@ -20,7 +20,6 @@ management:
     health:
       show-details: never
 copilot:
-  sandbox-port: ${server.port}
   model: ${OPENAI_MODEL:gpt-4o-mini}
   database-url: ${DATABASE_URL:jdbc:postgresql://127.0.0.1:5432/copilot}
   database-user: ${DATABASE_USER:copilot}

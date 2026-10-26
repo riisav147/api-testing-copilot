@@ -6,20 +6,19 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import java.net.*;
 import java.net.http.*;
 import java.util.*;
 import static org.assertj.core.api.Assertions.*;
 
-@SpringBootTest(webEnvironment=SpringBootTest.WebEnvironment.DEFINED_PORT, properties="server.port=18081")
+@SpringBootTest(webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("demo")
 class CopilotApiTest {
     @Autowired ObjectMapper mapper;
+    @LocalServerPort int port;
     private final HttpClient client=HttpClient.newHttpClient();
     private HttpResponse<String> post(String path,Object value) throws Exception {
-        return client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:18081"+path))
+        return client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+port+path))
                 .header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(value))).build(),HttpResponse.BodyHandlers.ofString());
     }
     @Test void importGenerateApproveExecuteAndDiagnoseBoundaryFailure() throws Exception {
