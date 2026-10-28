@@ -19,13 +19,22 @@ public class AiKnowledge implements Knowledge {
             String id=UUID.randomUUID().toString();
             documents.add(new Document(id,chunk,Map.of("specId",specification.id().toString(),"endpointKey",e.key())));
         }));
-        store.add(documents);
+        try {
+            store.add(documents);
+        } catch (Exception failure) {
+            throw ProviderErrors.translate(failure, "Evidence indexing failed. The specification was not imported.");
+        }
     }
     public List<Evidence> retrieve(UUID specificationId,Endpoint e) {
         var f=new FilterExpressionBuilder();
         var filter=f.and(f.eq("specId",specificationId.toString()),f.eq("endpointKey",e.key())).build();
-        var found=store.similaritySearch(SearchRequest.builder().query(e.key()+" "+e.summary()+" validation boundaries required fields")
-                .topK(4).similarityThreshold(0.0).filterExpression(filter).build());
+        List<Document> found;
+        try {
+            found=store.similaritySearch(SearchRequest.builder().query(e.key()+" "+e.summary()+" validation boundaries required fields")
+                    .topK(4).similarityThreshold(0.0).filterExpression(filter).build());
+        } catch (Exception failure) {
+            throw ProviderErrors.translate(failure, "Evidence retrieval failed. No test plan was generated.");
+        }
         List<Evidence> result=new ArrayList<>();
         // Always include the selected contract as an anchor even when semantic ranking favours prose.
         result.add(new Evidence("contract:"+specificationId+":"+e.key(),"CONTRACT "+e.key()+"\n"+e.contract(),1.0));

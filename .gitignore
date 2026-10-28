@@ -10,3 +10,5 @@ frontend/dist/
 .DS_Store
 .tools/
 .m2/
+__pycache__/
+*.pyc

@@ -27,7 +27,7 @@ public class AiGenerator implements ScenarioGenerator {
                     """).user("Selected operation: "+endpoint.key()+"\nEvidence data:\n"+evidence)
                     .call().entity(Draft.class);
         } catch(Exception e) {
-            throw new ApiException(HttpStatus.BAD_GATEWAY,"Model generation failed or returned unreadable structured output. No plan was stored.");
+            throw ProviderErrors.translate(e,"Model generation failed or returned unreadable structured output. No plan was stored.");
         }
     }
 }

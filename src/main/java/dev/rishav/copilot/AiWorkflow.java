@@ -20,7 +20,7 @@ public class AiWorkflow implements ModelWorkflow {
         } catch(ApiException e) { throw e; }
         catch(Exception e) {
             // Preserve the observed execution if a later model/serialization step fails; never re-execute it.
-            if (tool.result()==null) throw new ApiException(HttpStatus.BAD_GATEWAY,"The model/tool workflow failed. No successful execution result is available.");
+            if (tool.result()==null) throw ProviderErrors.translate(e,"The model/tool workflow failed. No successful execution result is available.");
         }
         if (tool.result()==null) throw new ApiException(HttpStatus.BAD_GATEWAY,"The model did not call the approved execution tool");
         return tool.result();
@@ -34,6 +34,6 @@ public class AiWorkflow implements ModelWorkflow {
                     without evidence. Suggest one concrete follow-up test. You have no tools or execution permissions.
                     """).user("Observed execution data:\n"+e).call().content();
             return new Analysis("ai",explanation);
-        } catch(Exception failure) { throw new ApiException(HttpStatus.BAD_GATEWAY,"Model analysis failed; the recorded execution remains available in this session"); }
+        } catch(Exception failure) { throw ProviderErrors.translate(failure,"Model analysis failed; the recorded execution remains available in this session"); }
     }
 }
