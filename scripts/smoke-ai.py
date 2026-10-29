@@ -48,10 +48,10 @@ def main():
         report["checks"].append("real-retrieval-and-validated-generation")
         report["scenarioCount"] = len(plan["scenarios"])
         report["evidenceCount"] = len(plan["evidence"])
-        request("/api/executions", {"planId": plan["id"], "scenarioIndex": 0, "approved": False}, expected=400)
+        request("/api/executions", {"planId": plan["id"], "scenarioIndex": 0, "expectedRevision": plan["scenarioRevisions"][0], "approved": False}, expected=400)
         report["checks"].append("unapproved-execution-rejected")
         index = next((i for i, s in enumerate(plan["scenarios"]) if s["category"] == "POSITIVE"), 0)
-        execution = request("/api/executions", {"planId": plan["id"], "scenarioIndex": index, "approved": True})
+        execution = request("/api/executions", {"planId": plan["id"], "scenarioIndex": index, "expectedRevision": plan["scenarioRevisions"][index], "approved": True})
         if execution["planId"] != plan["id"] or execution["scenarioIndex"] != index:
             raise RuntimeError("Execution is not associated with the approved scenario")
         if execution["passed"] != (execution["actualStatus"] == execution["expectedStatus"]):

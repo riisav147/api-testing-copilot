@@ -35,7 +35,8 @@ public class SandboxRunner {
             String responseBody;
             try(InputStream input=response.body()) { responseBody=new String(input.readNBytes(8192),StandardCharsets.UTF_8); }
             return new Execution(UUID.randomUUID(),plan.id(),index,s.expectedStatus(),response.statusCode(),
-                    response.statusCode()==s.expectedStatus(),Duration.ofNanos(System.nanoTime()-start).toMillis(),responseBody,Instant.now());
+                    response.statusCode()==s.expectedStatus(),Duration.ofNanos(System.nanoTime()-start).toMillis(),responseBody,Instant.now(),
+                    plan.scenarioRevisions().get(index),s);
         } catch(Exception e) { throw new ApiException(HttpStatus.BAD_GATEWAY,"Sandbox request failed or timed out"); }
     }
     public static boolean allowed(Scenario s) {

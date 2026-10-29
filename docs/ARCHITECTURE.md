@@ -36,12 +36,20 @@ flowchart TD
 ## Execution lifecycle
 
 1. The browser displays the generated request and requires explicit approval.
-2. The server checks approval again, resolves the stored plan, and checks the scenario index.
+2. The server checks approval again, resolves the stored plan, and checks the scenario index and reviewed revision. An outdated revision returns HTTP 409 before any execution tool is invoked.
 3. In AI mode a per-request tool wraps that fixed action. It accepts no model-supplied arguments and can attempt HTTP execution only once.
 4. The runner allows only the bundled fixture's method/path combinations. It never uses OpenAPI `servers` values or a user-provided host.
 5. An HTTP client sends to `127.0.0.1` on the running application's port. Redirects are disabled, timeout is five seconds, and only the first 8192 response bytes are read.
-6. The observed status is compared to the expected status. The execution is stored separately from the suggested plan.
+6. The observed status is compared to the expected status. The execution stores the scenario revision and request snapshot separately from the editable plan.
 7. Analysis receives a recorded result and no tools. It cannot execute another request.
+
+## Editing lifecycle
+
+Generated scenarios start at revision 1. The editor sends the expected revision together with a replacement query map, body and expected status. Method, path, title, category, rationale and sources are retained from the saved scenario. The generated descriptive fields remain context rather than a fresh interpretation of the user's edited request.
+
+The service checks the revision and validates the replacement against the selected endpoint and retrieved evidence. Only a successful save replaces the plan entry and increments the edited scenario's revision. Invalid edits leave the saved plan unchanged. Edits and executions use the same service lock so concurrent edits cannot both overwrite the same revision and an edit cannot change an action during execution.
+
+The browser disables execution while the draft editor is open and resets approval after edits. Old results remain labelled with their original revision and do not count toward execution of the current revision. A conflict offers an explicit discard-and-reload action. This is optimistic concurrency protection in one process, not a durable approval record, access control or cross-request idempotency.
 
 ## Where the data lives
 

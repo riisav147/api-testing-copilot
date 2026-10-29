@@ -51,6 +51,11 @@ public class OpenApiReader {
             if (endpoints.isEmpty() || endpoints.size()>40) throw ApiException.badRequest("Import between 1 and 40 operations");
             return List.copyOf(endpoints);
         } catch (ApiException e) { throw e; }
+        catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            var location=e.getLocation();
+            String position=location==null?"":" near line "+location.getLineNr()+", column "+location.getColumnNr();
+            throw ApiException.badRequest("Could not parse JSON/YAML"+position+". Check indentation, quotes and brackets.");
+        }
         catch (Exception e) { throw ApiException.badRequest("Could not parse the contract. Check JSON/YAML syntax and operation structure."); }
     }
 

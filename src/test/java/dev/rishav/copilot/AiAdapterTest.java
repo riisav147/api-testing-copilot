@@ -58,7 +58,7 @@ class AiAdapterTest {
                 {"role":"assistant","content":null,"tool_calls":[{"id":"call_fixture","type":"function","function":{"name":"executeApprovedScenario","arguments":"{}"}}]}
                 """;
         AtomicInteger calls=new AtomicInteger();
-        var observed=new Execution(UUID.randomUUID(),UUID.randomUUID(),0,201,201,true,2,"{}",Instant.now());
+        var observed=new Execution(UUID.randomUUID(),UUID.randomUUID(),0,201,201,true,2,"{}",Instant.now(),1,null);
         var result=new AiWorkflow(client()).executeApproved(() -> { calls.incrementAndGet(); return observed; });
         assertThat(result).isSameAs(observed);
         assertThat(calls.get()).isEqualTo(1);

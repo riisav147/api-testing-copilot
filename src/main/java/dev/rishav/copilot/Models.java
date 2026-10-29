@@ -24,10 +24,16 @@ public final class Models {
                              double categoryCoverage, double sourceCitationCoverage,
                              List<String> warnings) {}
     public record Plan(UUID id, UUID specificationId, String endpointKey, String mode,
-                       List<Scenario> scenarios, List<Evidence> evidence, Evaluation evaluation, Instant createdAt) {}
+                       List<Scenario> scenarios, List<Integer> scenarioRevisions, List<Evidence> evidence,
+                       Evaluation evaluation, Instant createdAt) {}
+    public record EditScenarioRequest(@NotNull @Min(1) Integer expectedRevision,
+                                      @NotNull Map<String,String> query, JsonNode body,
+                                      @Min(100) @Max(599) int expectedStatus) {}
     public record ExecuteRequest(@NotNull UUID planId, @Min(0) int scenarioIndex,
+                                 @NotNull @Min(1) Integer expectedRevision,
                                  @AssertTrue(message="Review the scenario and approve sandbox execution") boolean approved) {}
     public record Execution(UUID id, UUID planId, int scenarioIndex, int expectedStatus, int actualStatus,
-                            boolean passed, long durationMs, String responseBody, Instant createdAt) {}
+                            boolean passed, long durationMs, String responseBody, Instant createdAt,
+                            int scenarioRevision, Scenario requestSnapshot) {}
     public record Analysis(String mode, String explanation) {}
 }

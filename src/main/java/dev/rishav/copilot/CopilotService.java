@@ -43,18 +43,42 @@ public class CopilotService {
         Draft draft=generator.generate(endpoint,evidence);
         validator.validate(draft,endpoint,evidence);
         var plan=new Plan(UUID.randomUUID(),spec.id(),endpoint.key(),mode(),List.copyOf(draft.scenarios()),
-                List.copyOf(evidence),evaluator.evaluate(draft.scenarios()),Instant.now());
+                Collections.nCopies(draft.scenarios().size(),1),List.copyOf(evidence),evaluator.evaluate(draft.scenarios()),Instant.now());
         plans.put(plan.id(),plan); return plan;
+    }
+    public Plan plan(UUID id) { return required(plans,id); }
+    public synchronized Plan editScenario(UUID id, int index, EditScenarioRequest request) {
+        var plan=required(plans,id);
+        checkRevision(plan,index,request.expectedRevision());
+        var original=plan.scenarios().get(index);
+        var edited=new Scenario(original.title(),original.category(),original.method(),original.path(),
+                new LinkedHashMap<>(request.query()),request.body()==null?null:request.body().deepCopy(),
+                request.expectedStatus(),original.rationale(),original.sourceIds());
+        var scenarios=new ArrayList<>(plan.scenarios()); scenarios.set(index,edited);
+        var endpoint=required(specifications,plan.specificationId()).endpoints().stream()
+                .filter(e -> e.key().equals(plan.endpointKey())).findFirst().orElseThrow();
+        validator.validate(new Draft(scenarios),endpoint,plan.evidence());
+        // A validated edit creates a new revision; saved executions retain their own request snapshot.
+        var revisions=new ArrayList<>(plan.scenarioRevisions()); revisions.set(index,revisions.get(index)+1);
+        var updated=new Plan(plan.id(),plan.specificationId(),plan.endpointKey(),plan.mode(),
+                List.copyOf(scenarios),List.copyOf(revisions),plan.evidence(),evaluator.evaluate(scenarios),plan.createdAt());
+        plans.put(id,updated); return updated;
     }
     public synchronized Execution execute(ExecuteRequest request) {
         if (!request.approved()) throw ApiException.badRequest("Explicit review and approval is required");
         var plan=required(plans,request.planId());
-        if (request.scenarioIndex()<0 || request.scenarioIndex()>=plan.scenarios().size()) throw ApiException.badRequest("Scenario index out of range");
+        checkRevision(plan,request.scenarioIndex(),request.expectedRevision());
         capacity(executions,200);
         var execution=workflow.executeApproved(() -> runner.execute(plan,request.scenarioIndex()));
         executions.put(execution.id(),execution); return execution;
     }
     public Analysis analyse(UUID id) { return workflow.analyse(required(executions,id)); }
+    private void checkRevision(Plan plan, int index, Integer expectedRevision) {
+        if (index<0 || index>=plan.scenarios().size()) throw ApiException.badRequest("Scenario index out of range");
+        if (expectedRevision==null || expectedRevision<1) throw ApiException.badRequest("A scenario revision is required");
+        if (!expectedRevision.equals(plan.scenarioRevisions().get(index)))
+            throw new ApiException(HttpStatus.CONFLICT,"This scenario changed. Reload the latest plan and review it again.");
+    }
     private <T> T required(Map<UUID,T> map, UUID id) {
         T value=map.get(id); if (value==null) throw new ApiException(HttpStatus.NOT_FOUND,"Resource not found in this application session"); return value;
     }

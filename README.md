@@ -26,6 +26,14 @@ Open [the local app](http://127.0.0.1:5173). Load the sample API, import it, sel
 
 The sandbox is a disposable fixture: product 1 exists, other IDs return 404, and POST returns a response without storing a product. It is not a commerce backend.
 
+## Import and edit requests
+
+Drop a `.json`, `.yaml` or `.yml` specification onto the import area, choose a file, or paste its contents. Files are read locally into the editor before you click **Import contract**. The same 60,000-character contract limit applies; malformed JSON/YAML reports a line and column when available.
+
+After generation, select **Edit request** to change the body, documented query parameters or expected response status. The form editor preserves JSON value types; JSON view supports nested, array and scalar bodies. **Reset edits** restores the last saved request and **Cancel** discards the draft. Method, path and source references remain fixed to the generated scenario. The backend applies the same scenario validation to saved edits as to generated plans; deliberately invalid business inputs remain possible for negative tests.
+
+Each saved edit increments that scenario's revision. Execution requires the exact reviewed revision and explicit approval; outdated edits or execution requests receive HTTP 409. The UI clears approval after editing and labels previous results with their original revision. Executions retain the request snapshot that actually ran. Generated titles, categories and rationale remain contextual suggestions after an edit, not a new assessment of the edited request. Revisions and execution snapshots are session-only until persistent history is implemented.
+
 ![Demo request review and boundary failure](docs/demo-screenshot.jpg)
 
 ## Demo and AI modes
@@ -77,6 +85,7 @@ To reproduce a live smoke check after configuring API billing, run `python3 scri
 ./mvnw verify
 cd frontend
 npm ci
+npm test
 npm run build
 ```
 
@@ -102,9 +111,13 @@ All JSON endpoints are under `/api`. Error responses use Spring `ProblemDetail`.
 | POST | `/api/specifications` | Import `{name, content, documentation}` |
 | GET | `/api/specifications` | List imports in the current session |
 | POST | `/api/plans` | Generate using `{specificationId, endpointKey}` |
-| POST | `/api/executions` | Execute `{planId, scenarioIndex, approved: true}` |
+| GET | `/api/plans/{id}` | Reload the current plan and its `scenarioRevisions` |
+| PUT | `/api/plans/{id}/scenarios/{index}` | Save `{expectedRevision, query, body, expectedStatus}` |
+| POST | `/api/executions` | Execute `{planId, scenarioIndex, expectedRevision, approved: true}` |
 | POST | `/api/executions/{id}/analysis` | Explain a recorded result |
 | GET | `/actuator/health` | Backend health |
+
+`expectedRevision` is required for both editing and execution; take it from `plan.scenarioRevisions[scenarioIndex]`. Clients using the older execution payload must supply this field. A successful edit returns the updated plan. Execution responses include `scenarioRevision` and `requestSnapshot`; existing analysis uses the recorded execution even if the plan is edited later.
 
 ## Technical documentation
 

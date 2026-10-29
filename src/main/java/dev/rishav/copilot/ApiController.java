@@ -16,6 +16,9 @@ public class ApiController {
     @PostMapping("/specifications") public Specification create(@Valid @RequestBody ImportRequest request) { return service.importSpecification(request); }
     @GetMapping("/specifications") public List<Specification> specifications() { return service.specifications(); }
     @PostMapping("/plans") public Plan generate(@Valid @RequestBody GenerateRequest request) { return service.generate(request); }
+    @GetMapping("/plans/{id}") public Plan plan(@PathVariable UUID id) { return service.plan(id); }
+    @PutMapping("/plans/{id}/scenarios/{index}") public Plan edit(@PathVariable UUID id, @PathVariable int index,
+            @Valid @RequestBody EditScenarioRequest request) { return service.editScenario(id,index,request); }
     @PostMapping("/executions") public Execution execute(@Valid @RequestBody ExecuteRequest request) { return service.execute(request); }
     @PostMapping("/executions/{id}/analysis") public Analysis analyse(@PathVariable UUID id) { return service.analyse(id); }
 }
