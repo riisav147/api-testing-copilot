@@ -2,12 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 import { CHECK_LABELS } from './AssertionEditor.jsx';
+import ProjectHistory from './ProjectHistory.jsx';
 import ScenarioEditor from './ScenarioEditor.jsx';
 import { readContractFile } from './scenarioDraft.js';
 
 async function api(path, body, method = 'POST') {
   const response = await fetch(`/api${path}`, {
-    ...(body === undefined ? {} : { method, body: JSON.stringify(body) }),
+    ...(body === undefined ? {} : { method, ...(method === 'DELETE' ? {} : {body: JSON.stringify(body)}) }),
     headers: { 'Content-Type': 'application/json' },
   });
   const data = await response.json();
@@ -16,6 +17,10 @@ async function api(path, body, method = 'POST') {
 }
 
 function App() {
+  const [projects,setProjects]=useState([]);
+  const [workspace,setWorkspace]=useState(null);
+  const [projectName,setProjectName]=useState('');
+  const [deleteConfirm,setDeleteConfirm]=useState(false);
   const [info, setInfo] = useState(null);
   const [name, setName] = useState('Catalog API');
   const [content, setContent] = useState('');
@@ -37,6 +42,10 @@ function App() {
   const locked = !!busy || editing;
 
 
+  useEffect(() => { refreshProjects().then(async () => {
+    const savedId=localStorage.getItem('copilot-project');
+    if(savedId) { try { await openProject(savedId,localStorage.getItem('copilot-plan')); } catch { localStorage.removeItem('copilot-project'); localStorage.removeItem('copilot-plan'); } }
+  }).catch(e=>setError(e.message)); }, []);
   useEffect(() => { api('/info').then(setInfo).catch(() => setError('Backend unavailable. Start Spring Boot on port 8080.')); }, []);
   useEffect(() => { setApproved(false); }, [selected, plan, editing]);
   const scenario = plan?.scenarios[selected];
@@ -48,6 +57,32 @@ function App() {
   const queryNames = [...new Set((endpoint?.contract.parameters || []).filter(p => p.in === 'query').map(p => p.name))];
 
 
+  async function refreshProjects() { const list=await api('/projects'); setProjects(list); return list; }
+  async function openProject(id,preferredPlan) {
+    const data=await api(`/projects/${id}`); setWorkspace(data); setProjectName(data.project.name); setDeleteConfirm(false);
+    localStorage.setItem('copilot-project',id);
+    const chosen=data.plans.find(p=>p.id===preferredPlan) || data.plans.at(-1);
+    const saved=data.specifications.find(s=>s.specification.id===chosen?.specificationId) || data.specifications.at(-1);
+    if(saved) { setSpec(saved.specification); setName(saved.source.name); setContent(saved.source.content); setDocumentation(saved.source.documentation || ''); setOperation(chosen?.endpointKey || saved.specification.endpoints[0].key); }
+    setPlan(null); setResults({}); setAnalyses({}); setApproved(false); setEditing(false); setConflict(false);
+    if(chosen) showPlan(chosen,data); else localStorage.removeItem('copilot-plan');
+  }
+  function showPlan(chosen,data=workspace) {
+    const saved=data.specifications.find(s=>s.specification.id===chosen.specificationId);
+    setSpec(saved.specification); setName(saved.source.name); setContent(saved.source.content); setDocumentation(saved.source.documentation || '');
+    setOperation(chosen.endpointKey); setPlan(chosen); setSelected(0); setApproved(false); setView('scenarios');
+    localStorage.setItem('copilot-plan',chosen.id);
+    const resultMap={},analysisMap={};
+    data.executions.filter(e=>e.planId===chosen.id).forEach(e=>{resultMap[e.scenarioIndex]=e;analysisMap[e.scenarioIndex]=data.analyses[e.id];});
+    setResults(resultMap); setAnalyses(analysisMap);
+  }
+  function showSpecification(id) {
+    const saved=workspace.specifications.find(s=>s.specification.id===id); if(!saved)return;
+    setSpec(saved.specification);setName(saved.source.name);setContent(saved.source.content);setDocumentation(saved.source.documentation || '');setOperation(saved.specification.endpoints[0].key);
+    setPlan(null);setResults({});setAnalyses({});setApproved(false);setConflict(false);localStorage.removeItem('copilot-plan');
+  }
+  function newProject() { setWorkspace(null);setProjectName('');setName('New API');setContent('');setDocumentation('');setDeleteConfirm(false);invalidateContract();localStorage.removeItem('copilot-project');localStorage.removeItem('copilot-plan'); }
+  async function refreshHistory() { if(workspace) setWorkspace(await api(`/projects/${workspace.project.id}`)); }
   async function task(label, action) {
     setBusy(label); setError(''); setNotice('');
     try { await action(); } catch (e) { setError(e.message); if (e.status === 409) setConflict(true); } finally { setBusy(''); }
@@ -66,7 +101,7 @@ function App() {
     setBusy('Saving scenario'); setError(''); setNotice('');
     try {
       const updated = await api(`/plans/${plan.id}/scenarios/${selected}`, changes, 'PUT');
-      setPlan(updated); setEditing(false); setApproved(false); setConflict(false);
+      await refreshHistory(); setPlan(updated); setEditing(false); setApproved(false); setConflict(false);
       setNotice('Changes saved. Review this revision and approve it before running. Earlier results retain their original requests.');
     } catch (e) { if (e.status === 409) setConflict(true); throw e; }
     finally { setBusy(''); }
@@ -88,15 +123,17 @@ function App() {
   }
   async function importContract() {
     await task('Importing contract', async () => {
-      const imported = await api('/specifications', { name, content, documentation });
+      const imported = await api('/specifications', { name, content, documentation, projectId: workspace?.project.id ?? null });
       setSpec(imported); setOperation(imported.endpoints.find(e => e.method === 'POST')?.key || imported.endpoints[0].key);
       setPlan(null); setResults({}); setAnalyses({});
+      await refreshProjects();
+      const data=await api(`/specifications/${imported.id}/workspace`); const owner=data.project.id; setWorkspace(data);setProjectName(data.project.name);localStorage.setItem('copilot-project',owner);localStorage.removeItem('copilot-plan');
     });
   }
   async function generate() {
     await task('Generating scenarios', async () => {
       const generated = await api('/plans', { specificationId: spec.id, endpointKey: operation });
-      setPlan(generated); setConflict(false); setSelected(0); setResults({}); setAnalyses({}); setView('scenarios');
+      setPlan(generated); setConflict(false); setSelected(0); setResults({}); setAnalyses({}); setView('scenarios'); localStorage.setItem('copilot-plan',generated.id); await refreshHistory();
     });
   }
   async function execute() {
@@ -104,7 +141,7 @@ function App() {
       const observed = await api('/executions', { planId: plan.id, scenarioIndex: selected, expectedRevision: revision, approved });
       setResults(previous => ({ ...previous, [selected]: observed }));
       setAnalyses(previous => { const next = { ...previous }; delete next[selected]; return next; });
-      setApproved(false);
+      setApproved(false); await refreshHistory();
     });
   }
   function downloadPlan() {
@@ -128,6 +165,11 @@ function App() {
         {error && <div role="alert" className="error"><b>Something needs attention.</b> {error}<button aria-label="Dismiss error" onClick={() => setError('')}>×</button></div>}
         {notice && <p className="notice" role="status">{notice}</p>}
         {conflict && <div className="conflict"><p>The saved scenario changed. Reloading discards unsaved edits and clears approval.</p><button className="button subtle" disabled={!!busy} onClick={reloadPlan}>Discard edits and reload latest plan</button></div>}
+        <section className="panel project-manager"><h2>Projects</h2><div className="project-controls"><label>Saved project<select aria-label="Saved project" disabled={locked} value={workspace?.project.id || ''} onChange={e=>{if(e.target.value) task('Opening project',()=>openProject(e.target.value));}}><option value="">New project</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}{p.deleting?' · deletion pending':''}</option>)}</select></label><button className="button subtle" disabled={locked} onClick={newProject}>New project</button></div>
+        {workspace && <><label>Specification version<select aria-label="Specification version" disabled={locked} value={spec?.id || workspace.specifications.at(-1)?.specification.id || ''} onChange={e=>showSpecification(e.target.value)}>{workspace.specifications.map(s=><option key={s.specification.id} value={s.specification.id}>Version {s.version} · {s.source.name}</option>)}</select></label><label>Project name<input aria-label="Project name" disabled={locked} maxLength={100} value={projectName} onChange={e=>setProjectName(e.target.value)}/></label><div className="editor-actions"><button className="button subtle" disabled={locked || !projectName.trim()} onClick={()=>task('Renaming project',async()=>{await api(`/projects/${workspace.project.id}`,{name:projectName},'PUT');await refreshProjects();setWorkspace({...workspace,project:{...workspace.project,name:projectName}});})}>Rename project</button><button className="button subtle" disabled={locked} onClick={()=>setDeleteConfirm(true)}>Delete project</button></div><p>Importing another contract here saves a new specification version. {workspace.specifications.length} version(s) saved.</p></>}
+        {deleteConfirm && <div role="alert"><p>Delete this project, all its versions, plans, runs and indexed evidence? This cannot be undone.</p><button className="button subtle" disabled={locked} onClick={()=>setDeleteConfirm(false)}>Keep project</button><button className="button primary" disabled={locked} onClick={()=>task('Deleting project',async()=>{await api(`/projects/${workspace.project.id}`,{},'DELETE');newProject();await refreshProjects();})}>Confirm deletion</button></div>}
+        {projects.filter(p=>p.deleting).map(p=><button key={p.id} className="button subtle" disabled={locked} onClick={()=>task('Finishing deletion',async()=>{await api(`/projects/${p.id}`,{},'DELETE');await refreshProjects();})}>Retry deletion of {p.name}</button>)}
+        </section>
         <div className="steps"><span className={spec ? 'complete' : 'current'}><i>{spec ? '✓' : '1'}</i>Import contract</span><div/><span className={plan ? 'complete' : spec ? 'current' : ''}><i>{plan ? '✓' : '2'}</i>Choose & generate</span><div/><span className={Object.keys(results).length ? 'complete' : plan ? 'current' : ''}><i>3</i>Review, run & understand</span></div>
         <section className="panel import-panel"><div className="section-heading"><div><h2><span className="section-icon">{ }</span> Your API contract</h2><p>Bring the source of truth. Suggestions stay grounded in this contract.</p></div><button className="button subtle" disabled={locked} onClick={loadExample}>↗ Load sample API</button></div>
           <div className={`file-drop ${dragging ? 'dragging' : ''}`} aria-label="Specification file import" onDragOver={e => { e.preventDefault(); if (!locked) setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={e => { e.preventDefault(); setDragging(false); importFile(Array.from(e.dataTransfer.files)); }}>
@@ -148,11 +190,12 @@ function App() {
               <details><summary>Supporting sources ({scenario.sourceIds.length})</summary>{scenario.sourceIds.map(id => <code className="source-id" key={id}>{id}</code>)}</details><div className="execution-box"><div className="target"><span>◎ LOCAL SANDBOX ONLY</span><b>Expected HTTP {scenario.expectedStatus}</b></div><label className="approval"><input type="checkbox" checked={approved} disabled={locked} onChange={e => setApproved(e.target.checked)}/><span>I reviewed revision {revision} and approve running it against the bundled sandbox.</span></label><button className="button primary run" disabled={!approved || locked} onClick={execute}>{busy === 'Executing approved scenario' ? 'Executing…' : '▷ Execute approved scenario'}</button></div>
               {result && <div className={`result ${result.passed ? 'passed' : 'failed'}`} aria-live="polite"><div><b>{historicalResult ? `Previous result · revision ${result.scenarioRevision}` : result.passed ? '✓ All configured checks passed' : '× Response checks did not all pass'}</b><span>{result.durationMs} ms</span></div><p>{historicalResult && <>This result belongs to an earlier request. The current revision has not run.<br/></>}Expected {result.expectedStatus} · Observed {result.actualStatus}</p>{result.bodyTruncated && <p className="editor-error" role="status">Response truncated at 8,192 bytes. JSON checks could not be evaluated.</p>}
               <div className="assertion-results" aria-label="Assertion results">{result.assertionResults?.map((check,i) => <article className={`assertion-result ${check.outcome.toLowerCase()}`} key={i}><b>{check.outcome} · {CHECK_LABELS[check.check] || 'HTTP status'} · {check.target || 'whole body'}</b><p>{check.detail}</p><dl><dt>Expected</dt><dd>{JSON.stringify(check.expected)}</dd><dt>Actual</dt><dd>{check.actual === null ? 'null or unavailable — see detail' : JSON.stringify(check.actual)}</dd></dl></article>)}</div>
-              <h4>RESPONSE BODY</h4><pre>{result.responseBody}</pre><details><summary>Response headers</summary><pre>{JSON.stringify(result.responseHeaders,null,2)}</pre></details><details><summary>Request executed at revision {result.scenarioRevision}</summary><pre>{JSON.stringify(result.requestSnapshot, null, 2)}</pre></details><button className="button subtle" disabled={locked} onClick={() => task('Analysing result', async () => { const a = await api(`/executions/${result.id}/analysis`, {}); setAnalyses(previous => ({ ...previous, [selected]: a })); })}>{busy === 'Analysing result' ? 'Analysing…' : 'Explain this result →'}</button>{analysis && <p className="analysis"><span className="badge">{analysis.mode} analysis</span><br/>{analysis.explanation}</p>}</div>}
+              <h4>RESPONSE BODY</h4><pre>{result.responseBody}</pre><details><summary>Response headers</summary><pre>{JSON.stringify(result.responseHeaders,null,2)}</pre></details><details><summary>Request executed at revision {result.scenarioRevision}</summary><pre>{JSON.stringify(result.requestSnapshot, null, 2)}</pre></details><button className="button subtle" disabled={locked} onClick={() => task('Analysing result', async () => { const a = await api(`/executions/${result.id}/analysis`, {}); setAnalyses(previous => ({ ...previous, [selected]: a })); await refreshHistory(); })}>{busy === 'Analysing result' ? 'Analysing…' : 'Explain this result →'}</button>{analysis && <p className="analysis"><span className="badge">{analysis.mode} analysis</span><br/>{analysis.explanation}</p>}</div>}
             </section></div>}
           <div className="evaluation-notes">{plan.evaluation.warnings.map((warning, i) => <p key={i}>ⓘ {warning}</p>)}</div>
         </>}
-        <footer className="page-footer"><span>API Copilot <span className="footer-dot">·</span> Grounded in your contract.</span><span>Session data clears on backend restart.</span></footer>
+        {workspace && <ProjectHistory key={workspace.project.id} workspace={workspace} busy={locked} onPlan={p=>showPlan(p)}/>}
+        <footer className="page-footer"><span>API Copilot <span className="footer-dot">·</span> Grounded in your contract.</span><span>Projects and execution history are saved locally.</span></footer>
       </main>
     </div>
   </div>;

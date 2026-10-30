@@ -3,7 +3,7 @@
 ```mermaid
 flowchart TD
     U[React: import, review, approve] --> C[API controller]
-    C --> S[Copilot service: session resources]
+    C --> S[Copilot service: saved workspace]
     S --> P[Bounded OpenAPI reader]
     S --> K[Knowledge interface]
     K --> D[Demo exact lookup]
@@ -55,14 +55,18 @@ The browser disables execution while the draft editor is open and resets approva
 
 | Data | Demo | AI |
 | --- | --- | --- |
-| Specification metadata | Concurrent map | Concurrent map |
+| Specification metadata | H2 plus memory cache | H2 plus memory cache |
 | Evidence chunks | Concurrent map | pgvector document table |
-| Plans | Concurrent map | Concurrent map |
-| Executions | Concurrent map | Concurrent map |
+| Plans and revisions | H2 plus memory cache | H2 plus memory cache |
+| Executions and analyses | H2 plus memory cache | H2 plus memory cache |
 | Embeddings | None | PostgreSQL, 1536-dimensional vectors |
 | Provider key | Not needed | Environment variable, never returned by the API |
 
-AI vectors currently outlive the session metadata. Imports after restart receive new IDs, so old vectors are not reused. Orphan cleanup, durable metadata and atomic import workflows are future improvements. If a vector-store write partially succeeds and then fails, some orphan vectors may remain; the app does not pretend this is a cross-system transaction.
+`WorkspaceStore` initializes a versioned SQL migration and loads saved records into the service at startup. Foreign keys connect specification versions to projects, plans to specifications, revision snapshots and executions to plans, and analyses to executions. Plan edits atomically update the current plan and append an immutable revision snapshot. Demo evidence is rebuilt from saved contracts/documentation; AI evidence remains in pgvector without paid startup reindexing.
+
+Project deletion first persists a tombstone, then removes all vectors for each specification, then cascades relational deletion and clears caches. A vector cleanup failure leaves the project unavailable and retryable, including after restart. Import indexing and relational publication still span separate stores: a crash can leave orphan vectors. Successful external HTTP execution and result persistence are also not atomic; a database failure after a side effect requires investigation rather than a blind retry.
+
+The embedded database keeps the demo setup simple and holds all records in one process. It is not configured for shared service deployment. Records are retained until project deletion; bounded workspace caches remain, while plan revision snapshots can grow until deletion. Production work includes pagination, finer retention controls, backups, schema upgrade policies, and durable job/idempotency states.
 
 ## Important tradeoffs
 

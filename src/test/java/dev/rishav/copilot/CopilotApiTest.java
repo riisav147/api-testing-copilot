@@ -163,4 +163,21 @@ class CopilotApiTest {
         assertThat(result.path("assertionResults").get(2).path("outcome").asText()).isEqualTo("PASS");
     }
 
+    @Test void projectEndpointsVersionRenameAndDeleteWithoutAffectingOtherProjects() throws Exception {
+        var first=createPlan();var second=createPlan();
+        String specId=first.path("specificationId").asText();
+        var uri="http://127.0.0.1:"+port;
+        var workspace=mapper.readTree(client.send(HttpRequest.newBuilder(URI.create(uri+"/api/specifications/"+specId+"/workspace")).GET().build(),HttpResponse.BodyHandlers.ofString()).body());
+        String id=workspace.path("project").path("id").asText();
+        assertThat(post("/api/specifications",Map.of("name","v2","content",OpenApiReaderTest.example(),"projectId",id)).statusCode()).isEqualTo(200);
+        var renamed=client.send(HttpRequest.newBuilder(URI.create(uri+"/api/projects/"+id)).header("Content-Type","application/json").PUT(HttpRequest.BodyPublishers.ofString("{\"name\":\"Renamed project\"}")).build(),HttpResponse.BodyHandlers.ofString());
+        assertThat(renamed.statusCode()).isEqualTo(200);
+        var saved=mapper.readTree(client.send(HttpRequest.newBuilder(URI.create(uri+"/api/projects/"+id)).GET().build(),HttpResponse.BodyHandlers.ofString()).body());
+        assertThat(saved.path("specifications")).hasSize(2);
+        assertThat(saved.path("project").path("name").asText()).isEqualTo("Renamed project");
+        assertThat(client.send(HttpRequest.newBuilder(URI.create(uri+"/api/projects/"+id)).DELETE().build(),HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(200);
+        assertThat(post("/api/executions",Map.of("planId",first.path("id").asText(),"scenarioIndex",0,"expectedRevision",1,"approved",true)).statusCode()).isEqualTo(404);
+        assertThat(post("/api/executions",Map.of("planId",second.path("id").asText(),"scenarioIndex",0,"expectedRevision",1,"approved",true)).statusCode()).isEqualTo(200);
+    }
+
 }

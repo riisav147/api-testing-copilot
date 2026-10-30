@@ -32,9 +32,19 @@ Drop a `.json`, `.yaml` or `.yml` specification onto the import area, choose a f
 
 After generation, select **Edit request** to change the body, documented query parameters or expected response status. The form editor preserves JSON value types; JSON view supports nested, array and scalar bodies. **Reset edits** restores the last saved request and **Cancel** discards the draft. Method, path and source references remain fixed to the generated scenario. The backend applies the same scenario validation to saved edits as to generated plans; deliberately invalid business inputs remain possible for negative tests.
 
-Each saved edit increments that scenario's revision. Execution requires the exact reviewed revision and explicit approval; outdated edits or execution requests receive HTTP 409. The UI clears approval after editing and labels previous results with their original revision. Executions retain the request snapshot that actually ran. Generated titles, categories and rationale remain contextual suggestions after an edit, not a new assessment of the edited request. Revisions and execution snapshots are session-only until persistent history is implemented.
+Each saved edit increments that scenario's revision. Execution requires the exact reviewed revision and explicit approval; outdated edits or execution requests receive HTTP 409. The UI clears approval after editing and labels previous results with their original revision. Executions retain the request snapshot that actually ran. Generated titles, categories and rationale remain contextual suggestions after an edit, not a new assessment of the edited request. Revisions and execution snapshots are saved in the workspace database.
 
 ![Demo request review and boundary failure](docs/demo-screenshot.jpg)
+
+## Saved projects and history
+
+Importing a contract creates a project. Importing again while a project is selected creates its next specification version; **New project** starts a separate workspace. Select saved projects or specification versions, rename a project, and reopen earlier plans from **Saved plans and execution history**. Two run selectors show the exact historical request/assertions and recorded results side by side. Historical results retain their original revision even after edits. Browser refresh restores the selected project and last plan; approval always starts unchecked. Unsaved draft edits are not persisted.
+
+Both modes use an embedded H2 file database at `.tools/workspace.mv.db` by default. No database server or key is required for the demo. SQL migration `db/workspace/V1.sql` creates related project, specification, plan, revision, execution and analysis tables with foreign keys and cascading deletion. A migration ledger records the installed version; JSON payloads preserve domain snapshots. Tests use isolated memory/temporary databases rather than your workspace. Back up the database with the backend stopped. Only one backend process may open the default file at a time.
+
+Project data is retained until explicitly deleted. The UI asks you to confirm deletion. In AI mode evidence is removed by specification metadata before relational deletion. A persisted deletion marker prevents reuse if vector cleanup fails; **Retry deletion** completes cleanup after connectivity recovers. This is retryable coordination, not a transaction spanning H2 and pgvector. A crash during indexing before import publication can still leave orphan vectors and needs separate maintenance. Data from the previous in-memory implementation cannot be recovered after its process exits.
+
+Workspace JDBC settings are `copilot.storage-url`, `copilot.storage-user` and `copilot.storage-password`, separate from the AI vector database settings. The verified default is embedded H2. Keep `.tools/` private: it contains imported documents and response snapshots. Switching between demo and AI keeps saved records, but imports indexed only in demo must be reimported as a new version to create AI vectors. AI imports are not automatically re-embedded at startup.
 
 ## Response assertions
 
@@ -65,9 +75,9 @@ Limits: 20 additional assertions per scenario, 300-character targets, 8,000-char
 | Evidence | Endpoint contract and documentation | Contract anchor plus top 4 endpoint-filtered semantic matches |
 | Execution | Approved scenario sent directly to sandbox | Model invokes a zero-argument tool bound to the approved scenario |
 | Analysis | Deterministic explanation | Model explanation using the recorded result, with no tools |
-| Storage | Session memory | Session memory for workflows, persistent vectors in PostgreSQL |
+| Storage | Embedded workspace database | Embedded workspace database plus PostgreSQL vectors |
 
-Both modes enforce the same scenario validation, explicit execution approval, fixed sandbox target, method/path allowlist, no redirects, request timeout, response size limit, and session capacity limits. Source citations are checked against the retrieved context. A citation does **not** prove that an assertion is correct.
+Both modes enforce the same scenario validation, explicit execution approval, fixed sandbox target, method/path allowlist, no redirects, request timeout, response size limit, and workspace capacity limits. Source citations are checked against the retrieved context. A citation does **not** prove that an assertion is correct.
 
 ## Enable AI mode
 
@@ -128,8 +138,13 @@ All JSON endpoints are under `/api`. Error responses use Spring `ProblemDetail`.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/info` | Mode, target and storage information |
-| POST | `/api/specifications` | Import `{name, content, documentation}` |
-| GET | `/api/specifications` | List imports in the current session |
+| GET | `/api/projects` | List saved projects and pending deletions |
+| GET | `/api/projects/{id}` | Project versions, plans, revision snapshots, runs and analyses |
+| PUT | `/api/projects/{id}` | Rename using `{name}` |
+| DELETE | `/api/projects/{id}` | Delete project data and indexed evidence; retry after cleanup failure |
+| GET | `/api/specifications/{id}/workspace` | Open the workspace owning this import |
+| POST | `/api/specifications` | Import `{name, content, documentation, projectId}`; omit projectId for a new project |
+| GET | `/api/specifications` | List saved imports |
 | POST | `/api/plans` | Generate using `{specificationId, endpointKey}` |
 | GET | `/api/plans/{id}` | Reload the current plan and its `scenarioRevisions` |
 | PUT | `/api/plans/{id}/scenarios/{index}` | Save `{expectedRevision, query, body, expectedStatus, assertions}` |
@@ -151,7 +166,7 @@ This is a **single-user localhost application**, not an authenticated production
 
 Only GET `/products`, GET `/products/{id}`, and POST `/products` may execute, always against the bundled sandbox on the application's own loopback port. Specification `servers` URLs and generated hostnames are never used. HTTP status and configured response assertions run deterministically. Response schema validation covers only the documented subset; business-state assertions are future work.
 
-Imports, plans and execution records reset when the backend restarts. AI vectors persist and need explicit lifecycle/cleanup work before long-running use. Session caps are 20 imports, 100 plans, and 200 executions. A single service lock serializes expensive operations, making capacity checks simple but limiting concurrency. Durable approval workflows, cross-request idempotency, distributed job queues, and comprehensive telemetry are not implemented.
+Imports, plans, revisions, executions and explanations survive restarts. Workspace caps are 200 imports, 1,000 plans and 5,000 executions; delete unused projects to free capacity. A single service lock serializes expensive operations, making capacity checks simple but limiting concurrency. Durable approval workflows, cross-request idempotency, distributed job queues, and comprehensive telemetry are not implemented.
 
 ## References
 

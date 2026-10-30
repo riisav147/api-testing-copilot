@@ -82,4 +82,12 @@ class AiAdapterTest {
         assertThat(filter).contains("specId",id.toString(),"endpointKey","POST /products");
         assertThat(evidence.getFirst().content()).contains("CONTRACT POST /products");
     }
+    @Test void deletingEvidenceIsFilteredToOneSpecification() {
+        VectorStore store=mock(VectorStore.class);UUID id=UUID.randomUUID();
+        new AiKnowledge(store).delete(id);
+        var filter=ArgumentCaptor.forClass(org.springframework.ai.vectorstore.filter.Filter.Expression.class);
+        verify(store).delete(filter.capture());
+        assertThat(filter.getValue().toString()).contains("specId",id.toString());
+    }
+
 }

@@ -11,9 +11,14 @@ public class ApiController {
     private final CopilotService service;
     public ApiController(CopilotService service) { this.service=service; }
     @GetMapping("/info") public Map<String,Object> info() {
-        return Map.of("mode",service.mode(),"executionTarget","bundled localhost sandbox only","storage","session memory; AI vectors persist in pgvector");
+        return Map.of("mode",service.mode(),"executionTarget","bundled localhost sandbox only","storage","persistent workspace database; AI vectors persist in pgvector");
     }
+    @GetMapping("/projects") public List<Project> projects() { return service.projects(); }
+    @GetMapping("/projects/{id}") public Workspace workspace(@PathVariable UUID id) { return service.workspace(id); }
+    @PutMapping("/projects/{id}") public Project rename(@PathVariable UUID id,@Valid @RequestBody ProjectName request) { return service.rename(id,request.name()); }
+    @DeleteMapping("/projects/{id}") public Map<String,Boolean> delete(@PathVariable UUID id) { service.deleteProject(id); return Map.of("deleted",true); }
     @PostMapping("/specifications") public Specification create(@Valid @RequestBody ImportRequest request) { return service.importSpecification(request); }
+    @GetMapping("/specifications/{id}/workspace") public Workspace owner(@PathVariable UUID id) { return service.specificationWorkspace(id); }
     @GetMapping("/specifications") public List<Specification> specifications() { return service.specifications(); }
     @PostMapping("/plans") public Plan generate(@Valid @RequestBody GenerateRequest request) { return service.generate(request); }
     @GetMapping("/plans/{id}") public Plan plan(@PathVariable UUID id) { return service.plan(id); }

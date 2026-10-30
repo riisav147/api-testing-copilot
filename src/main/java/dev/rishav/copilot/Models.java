@@ -9,7 +9,12 @@ public final class Models {
     private Models() {}
     public enum Category { POSITIVE, NEGATIVE, EDGE }
     public record ImportRequest(@NotBlank @Size(max=100) String name,
-            @NotBlank @Size(max=60000) String content, @Size(max=30000) String documentation) {}
+            @NotBlank @Size(max=60000) String content, @Size(max=30000) String documentation, UUID projectId) {}
+    public record Project(UUID id,String name,Instant createdAt,boolean deleting) {}
+    public record ProjectName(@NotBlank @Size(max=100) String name) {}
+    public record SavedSpecification(UUID projectId,int version,Specification specification,ImportRequest source) {}
+    public record Workspace(Project project,List<SavedSpecification> specifications,List<Plan> plans,
+                            List<Plan> revisions,List<Execution> executions,Map<UUID,Analysis> analyses) {}
     public record Endpoint(String key, String method, String path, String summary, JsonNode contract,
                            Set<Integer> statuses) {}
     public record Specification(UUID id, String name, List<Endpoint> endpoints, Instant createdAt) {}

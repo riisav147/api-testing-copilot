@@ -7,6 +7,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import static dev.rishav.copilot.Models.*;
 
 public interface Knowledge {
+    default void delete(UUID specificationId) {}
     void index(Specification specification, String documentation);
     List<Evidence> retrieve(UUID specificationId, Endpoint endpoint);
 
@@ -29,6 +30,7 @@ class DemoKnowledge implements Knowledge {
         specification.endpoints().forEach(e -> entries.put(specification.id()+e.key(),
             Knowledge.chunks(e, docs).stream().map(c -> new Evidence(UUID.randomUUID().toString(), c, 1.0)).toList()));
     }
+    public void delete(UUID specificationId) { entries.keySet().removeIf(k -> k.startsWith(specificationId.toString())); }
     public List<Evidence> retrieve(UUID specificationId, Endpoint endpoint) {
         return entries.getOrDefault(specificationId+endpoint.key(), List.of()).stream().limit(4).toList();
     }

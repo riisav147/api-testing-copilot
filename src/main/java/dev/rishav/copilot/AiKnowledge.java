@@ -25,6 +25,10 @@ public class AiKnowledge implements Knowledge {
             throw ProviderErrors.translate(failure, "Evidence indexing failed. The specification was not imported.");
         }
     }
+    public void delete(UUID specificationId) {
+        var f=new FilterExpressionBuilder();
+        store.delete(f.eq("specId",specificationId.toString()).build());
+    }
     public List<Evidence> retrieve(UUID specificationId,Endpoint e) {
         var f=new FilterExpressionBuilder();
         var filter=f.and(f.eq("specId",specificationId.toString()),f.eq("endpointKey",e.key())).build();
