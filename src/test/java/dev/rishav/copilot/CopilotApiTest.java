@@ -87,7 +87,7 @@ class CopilotApiTest {
         assertThat(observed.path("passed").asBoolean()).isFalse();
         assertThat(observed.path("requestSnapshot")).isEqualTo(updated.path("scenarios").get(0));
         var oldAnalysis=post("/api/executions/"+first.path("id").asText()+"/analysis",Map.of());
-        assertThat(mapper.readTree(oldAnalysis.body()).path("explanation").asText()).contains("matches expected HTTP 201");
+        assertThat(mapper.readTree(oldAnalysis.body()).path("explanation").asText()).contains("All 1 configured checks passed");
         assertThat(latest(id)).isEqualTo(updated);
     }
     @Test void invalidEditsLeaveSavedRequestAndRevisionUnchanged() throws Exception {
@@ -128,6 +128,39 @@ class CopilotApiTest {
         var response=post("/api/specifications",Map.of("name","Broken","content","openapi: 3.0.3\npaths: [\nSECRET_SENTINEL"));
         assertThat(response.statusCode()).isEqualTo(400);
         assertThat(response.body()).contains("line","column").doesNotContain("SECRET_SENTINEL");
+    }
+
+    @Test void responseChecksCanFailAnOtherwiseSuccessfulRequestAndInvalidateApproval() throws Exception {
+        var plan=createPlan(); String id=plan.path("id").asText();
+        var check=Map.of("kind","JSON_EQUALS","target","/price","expected",999);
+        var change=Map.of("expectedRevision",1,"query",Map.of(),"body",Map.of("name","Checked product","price",5),"expectedStatus",201,"assertions",List.of(check));
+        assertThat(edit(id,0,change).statusCode()).isEqualTo(200);
+        assertThat(post("/api/executions",Map.of("planId",id,"scenarioIndex",0,"expectedRevision",1,"approved",true)).statusCode()).isEqualTo(409);
+        var response=post("/api/executions",Map.of("planId",id,"scenarioIndex",0,"expectedRevision",2,"approved",true));
+        assertThat(response.statusCode()).isEqualTo(200);
+        var execution=mapper.readTree(response.body());
+        assertThat(execution.path("actualStatus").asInt()).isEqualTo(201);
+        assertThat(execution.path("passed").asBoolean()).isFalse();
+        assertThat(execution.path("assertionResults").get(0).path("outcome").asText()).isEqualTo("PASS");
+        assertThat(execution.path("assertionResults").get(1).path("outcome").asText()).isEqualTo("FAIL");
+        assertThat(execution.path("responseHeaders").has("content-type")).isTrue();
+        assertThat(execution.path("requestSnapshot").path("assertions")).hasSize(1);
+        assertThat(post("/api/executions/"+execution.path("id").asText()+"/analysis",Map.of()).body()).contains("HTTP status matched","JSON_EQUALS");
+    }
+
+    @Test void truncatedHttpResponseNeverPassesJsonChecks() throws Exception {
+        var plan=createPlan(); String id=plan.path("id").asText();
+        var change=Map.of("expectedRevision",1,"query",Map.of(),"body",Map.of("name","x".repeat(9000),"price",5),"expectedStatus",201,
+                "assertions",List.of(Map.of("kind","JSON_EXISTS","target","/name"),Map.of("kind","HEADER_EQUALS","target","content-type","expected","application/json")));
+        assertThat(edit(id,0,change).statusCode()).isEqualTo(200);
+        var response=post("/api/executions",Map.of("planId",id,"scenarioIndex",0,"expectedRevision",2,"approved",true));
+        var result=mapper.readTree(response.body());
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(result.path("bodyTruncated").asBoolean()).isTrue();
+        assertThat(result.path("passed").asBoolean()).isFalse();
+        assertThat(result.path("responseBody").asText().getBytes(java.nio.charset.StandardCharsets.UTF_8)).hasSize(8192);
+        assertThat(result.path("assertionResults").get(1).path("outcome").asText()).isEqualTo("UNEVALUABLE");
+        assertThat(result.path("assertionResults").get(2).path("outcome").asText()).isEqualTo("PASS");
     }
 
 }

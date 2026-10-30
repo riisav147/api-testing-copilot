@@ -54,7 +54,7 @@ def main():
         execution = request("/api/executions", {"planId": plan["id"], "scenarioIndex": index, "expectedRevision": plan["scenarioRevisions"][index], "approved": True})
         if execution["planId"] != plan["id"] or execution["scenarioIndex"] != index:
             raise RuntimeError("Execution is not associated with the approved scenario")
-        if execution["passed"] != (execution["actualStatus"] == execution["expectedStatus"]):
+        if execution["passed"] != all(check["outcome"] == "PASS" for check in execution["assertionResults"]):
             raise RuntimeError("Status comparison is inconsistent")
         report["checks"].append("live-model-tool-execution")
         report["execution"] = {key: execution[key] for key in ("expectedStatus", "actualStatus", "passed")}

@@ -25,6 +25,7 @@ public class ScenarioValidator {
                 .map(s -> s.matches("\\{[^}]+}") ? "[A-Za-z0-9_-]+" : Pattern.quote(s))
                 .collect(Collectors.joining("/"));
         for (Scenario s:draft.scenarios()) {
+            AssertionEngine.validate(s.assertions());
             if (!names.add(s.title())) reject("Duplicate scenario titles");
             if (!endpoint.method().equals(s.method()) || !s.path().matches(pathPattern) || s.path().contains(".."))
                 reject("Scenario method/path does not match the selected operation");

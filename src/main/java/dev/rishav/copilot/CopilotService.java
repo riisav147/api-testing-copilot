@@ -53,7 +53,7 @@ public class CopilotService {
         var original=plan.scenarios().get(index);
         var edited=new Scenario(original.title(),original.category(),original.method(),original.path(),
                 new LinkedHashMap<>(request.query()),request.body()==null?null:request.body().deepCopy(),
-                request.expectedStatus(),original.rationale(),original.sourceIds());
+                request.expectedStatus(),original.rationale(),original.sourceIds(),request.assertions()==null?original.assertions():request.assertions());
         var scenarios=new ArrayList<>(plan.scenarios()); scenarios.set(index,edited);
         var endpoint=required(specifications,plan.specificationId()).endpoints().stream()
                 .filter(e -> e.key().equals(plan.endpointKey())).findFirst().orElseThrow();

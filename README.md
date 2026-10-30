@@ -36,6 +36,26 @@ Each saved edit increments that scenario's revision. Execution requires the exac
 
 ![Demo request review and boundary failure](docs/demo-screenshot.jpg)
 
+## Response assertions
+
+Select **Edit request**, then **Add response check**. HTTP status equality is always evaluated. Additional checks support exact header equality, JSON field existence, JSON types, JSON equality, inclusive numeric lower/upper bounds and a bounded JSON schema subset. JSON targets use JSON Pointer: `/price`, `/items/0/id`, or an empty pointer for the whole response. Escape `/` as `~1` and `~` as `~0` in property names. Numbers compare numerically; strings are never coerced into numbers. Existing JSON `null` is different from a missing field.
+
+For the positive Catalog request, add **JSON value equals**, target `/price`, expected `999`. Save and approve the new revision: HTTP 201 passes, but the overall test fails because the actual price is 79. The result displays each check's outcome, expected value, actual value and explanation. **Explain this result** uses the recorded checks. Expand response headers or the executed request snapshot for more detail.
+
+**Use documented response schema** copies the selected status's `application/json` schema into an editable check when one exists. Supported validation keywords are `type` (one type), `properties`, `required`, `items`, `enum`, `minimum`, `maximum`, `nullable` and boolean `additionalProperties`. Annotation keywords such as descriptions/examples are ignored. Other keywords, malformed schemas or schemas beyond the bounded complexity return **UNEVALUABLE**, never a silent pass. This is an explicit subset, not complete OpenAPI/JSON Schema validation. Schema assertions are reviewed expectations, not proof of business correctness.
+
+Results distinguish **PASS**, **FAIL** and **UNEVALUABLE**. Every configured check must pass for overall success. JSON checks on invalid/empty JSON or responses exceeding 8,192 captured bytes are unevaluable; status/header checks still run. Network failures return an execution error rather than a fabricated assertion result. Header names are case-insensitive; values compare exactly (multiple values joined with comma and space), including content-type parameters.
+
+The edit API accepts an optional `assertions` array. Omit it to preserve current assertions; send `[]` to remove them. For example:
+
+```json
+{"expectedRevision":1,"query":{},"body":{"name":"Keyboard","price":79},"expectedStatus":201,
+ "assertions":[{"kind":"JSON_GTE","target":"/price","expected":0},
+               {"kind":"JSON_TYPE","target":"/name","expected":"string"}]}
+```
+
+Limits: 20 additional assertions per scenario, 300-character targets, 8,000-character expected JSON values. Assertion edits increment the same request revision and require new approval. Execution snapshots include the exact assertions, response headers, a `bodyTruncated` indicator and `assertionResults`. Existing clients must derive overall success from all recorded check outcomes instead of status equality alone.
+
 ## Demo and AI modes
 
 | Behaviour | Demo (default) | AI (`ai` profile) |
@@ -112,7 +132,7 @@ All JSON endpoints are under `/api`. Error responses use Spring `ProblemDetail`.
 | GET | `/api/specifications` | List imports in the current session |
 | POST | `/api/plans` | Generate using `{specificationId, endpointKey}` |
 | GET | `/api/plans/{id}` | Reload the current plan and its `scenarioRevisions` |
-| PUT | `/api/plans/{id}/scenarios/{index}` | Save `{expectedRevision, query, body, expectedStatus}` |
+| PUT | `/api/plans/{id}/scenarios/{index}` | Save `{expectedRevision, query, body, expectedStatus, assertions}` |
 | POST | `/api/executions` | Execute `{planId, scenarioIndex, expectedRevision, approved: true}` |
 | POST | `/api/executions/{id}/analysis` | Explain a recorded result |
 | GET | `/actuator/health` | Backend health |
@@ -129,7 +149,7 @@ All JSON endpoints are under `/api`. Error responses use Spring `ProblemDetail`.
 
 This is a **single-user localhost application**, not an authenticated production service. It supports a useful subset of OpenAPI 3 JSON/YAML: ordinary operations, local nonrecursive references, parameters, JSON request schemas and explicit numeric response statuses. It does not implement complete OpenAPI/JSON Schema validation, recursive models, reference sibling merging, composed schemas, XML/multipart test generation, auth flows, or wildcard response-status matching. Demo cases are templates and can require manual fixture adjustments for unfamiliar APIs.
 
-Only GET `/products`, GET `/products/{id}`, and POST `/products` may execute, always against the bundled sandbox on the application's own loopback port. Specification `servers` URLs and generated hostnames are never used. The current assertion is **HTTP status equality**; response-schema and business-state assertions are future work.
+Only GET `/products`, GET `/products/{id}`, and POST `/products` may execute, always against the bundled sandbox on the application's own loopback port. Specification `servers` URLs and generated hostnames are never used. HTTP status and configured response assertions run deterministically. Response schema validation covers only the documented subset; business-state assertions are future work.
 
 Imports, plans and execution records reset when the backend restarts. AI vectors persist and need explicit lifecycle/cleanup work before long-running use. Session caps are 20 imports, 100 plans, and 200 executions. A single service lock serializes expensive operations, making capacity checks simple but limiting concurrency. Durable approval workflows, cross-request idempotency, distributed job queues, and comprehensive telemetry are not implemented.
 

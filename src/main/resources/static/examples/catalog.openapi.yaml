@@ -21,6 +21,19 @@ paths:
       responses:
         '201':
           description: Product created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, name, price]
+                properties:
+                  id:
+                    type: integer
+                  name:
+                    type: string
+                  price:
+                    type: number
+                    minimum: 0
         '400':
           description: Invalid name, missing field, or price below zero
   /products/{id}:

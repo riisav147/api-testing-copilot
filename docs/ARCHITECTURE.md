@@ -39,8 +39,8 @@ flowchart TD
 2. The server checks approval again, resolves the stored plan, and checks the scenario index and reviewed revision. An outdated revision returns HTTP 409 before any execution tool is invoked.
 3. In AI mode a per-request tool wraps that fixed action. It accepts no model-supplied arguments and can attempt HTTP execution only once.
 4. The runner allows only the bundled fixture's method/path combinations. It never uses OpenAPI `servers` values or a user-provided host.
-5. An HTTP client sends to `127.0.0.1` on the running application's port. Redirects are disabled, timeout is five seconds, and only the first 8192 response bytes are read.
-6. The observed status is compared to the expected status. The execution stores the scenario revision and request snapshot separately from the editable plan.
+5. An HTTP client sends to `127.0.0.1` on the running application's port. Redirects are disabled, timeout is five seconds, and a lookahead byte detects truncation beyond the 8192 captured response bytes.
+6. The deterministic assertion engine evaluates mandatory status equality and the saved response assertions. Overall success requires every result to be PASS. The execution stores the scenario revision and request snapshot separately from the editable plan.
 7. Analysis receives a recorded result and no tools. It cannot execute another request.
 
 ## Editing lifecycle
@@ -78,7 +78,7 @@ AI vectors currently outlive the session metadata. Imports after restart receive
 
 **Coarse service synchronization:** capacity checks and writes are simple and deterministic, but slow provider calls serialize unrelated requests. A production design should use durable jobs, bounded queues, cancellation, per-resource locking and quotas.
 
-**Limited assertions:** an HTTP 201 response may still have a wrong body or incorrect side effects. This version checks status only. Additional assertion types belong in an explicit model and a deterministic assertion engine.
+**Deterministic assertions:** `AssertionEngine` evaluates typed header/JSON checks after bounded response capture. JSON Pointer selects fields without running expressions or scripts. Missing fields, wrong values and wrong types fail; invalid/empty/truncated JSON and unsupported schema rules are unevaluable. Header and status checks remain available independently. An overall result passes only when every configured check passes. The schema checker first scans the complete schema definition for unsupported keywords, so unsupported rules in absent optional properties cannot silently pass. Business state and side effects remain outside these checks.
 
 ## Security boundary and remaining gaps
 

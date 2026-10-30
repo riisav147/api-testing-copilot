@@ -19,6 +19,7 @@ public class SandboxRunner {
     private final HttpClient client=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2))
             .followRedirects(HttpClient.Redirect.NEVER).build();
     private final ObjectMapper mapper;
+    private final AssertionEngine assertions=new AssertionEngine();
     public SandboxRunner(ServletWebServerApplicationContext context, ObjectMapper mapper) { this.context=context; this.mapper=mapper; }
 
     public Execution execute(Plan plan, int index) {
@@ -32,11 +33,15 @@ public class SandboxRunner {
             builder.method(s.method(),body.isEmpty()?HttpRequest.BodyPublishers.noBody():HttpRequest.BodyPublishers.ofString(body));
             long start=System.nanoTime();
             var response=client.send(builder.build(),HttpResponse.BodyHandlers.ofInputStream());
-            String responseBody;
-            try(InputStream input=response.body()) { responseBody=new String(input.readNBytes(8192),StandardCharsets.UTF_8); }
+            byte[] bytes;
+            try(InputStream input=response.body()) { bytes=input.readNBytes(8193); }
+            boolean truncated=bytes.length>8192;
+            String responseBody=new String(bytes,0,Math.min(bytes.length,8192),StandardCharsets.UTF_8);
+            var headers=response.headers().map();
+            var checks=assertions.evaluate(s,response.statusCode(),headers,responseBody,truncated);
             return new Execution(UUID.randomUUID(),plan.id(),index,s.expectedStatus(),response.statusCode(),
-                    response.statusCode()==s.expectedStatus(),Duration.ofNanos(System.nanoTime()-start).toMillis(),responseBody,Instant.now(),
-                    plan.scenarioRevisions().get(index),s);
+                    checks.stream().allMatch(c -> c.outcome()==CheckOutcome.PASS),Duration.ofNanos(System.nanoTime()-start).toMillis(),responseBody,Instant.now(),
+                    plan.scenarioRevisions().get(index),s,headers,truncated,checks);
         } catch(Exception e) { throw new ApiException(HttpStatus.BAD_GATEWAY,"Sandbox request failed or timed out"); }
     }
     public static boolean allowed(Scenario s) {

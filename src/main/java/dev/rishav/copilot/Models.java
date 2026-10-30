@@ -18,7 +18,18 @@ public final class Models {
     public record Scenario(@NotBlank String title, @NotNull Category category,
             @NotBlank String method, @NotBlank String path, @NotNull Map<String,String> query,
             JsonNode body, @Min(100) @Max(599) int expectedStatus,
-            @NotBlank String rationale, @NotEmpty List<String> sourceIds) {}
+            @NotBlank String rationale, @NotEmpty List<String> sourceIds, List<ResponseAssertion> assertions) {
+        public Scenario { assertions=assertions==null?List.of():List.copyOf(assertions); }
+        public Scenario(String title, Category category, String method, String path, Map<String,String> query,
+                        JsonNode body, int expectedStatus, String rationale, List<String> sourceIds) {
+            this(title,category,method,path,query,body,expectedStatus,rationale,sourceIds,List.of());
+        }
+    }
+    public enum AssertionKind { HEADER_EQUALS, JSON_EXISTS, JSON_TYPE, JSON_EQUALS, JSON_GTE, JSON_LTE, JSON_SCHEMA }
+    public enum CheckOutcome { PASS, FAIL, UNEVALUABLE }
+    public record ResponseAssertion(AssertionKind kind, String target, JsonNode expected) {}
+    public record AssertionResult(String check, String target, CheckOutcome outcome,
+                                  JsonNode expected, JsonNode actual, String detail) {}
     public record Draft(@NotEmpty @Size(max=12) List<@NotNull @jakarta.validation.Valid Scenario> scenarios) {}
     public record Evaluation(int total, Map<Category,Long> categoryCounts,
                              double categoryCoverage, double sourceCitationCoverage,
@@ -28,12 +39,20 @@ public final class Models {
                        Evaluation evaluation, Instant createdAt) {}
     public record EditScenarioRequest(@NotNull @Min(1) Integer expectedRevision,
                                       @NotNull Map<String,String> query, JsonNode body,
-                                      @Min(100) @Max(599) int expectedStatus) {}
+                                      @Min(100) @Max(599) int expectedStatus, List<ResponseAssertion> assertions) {}
     public record ExecuteRequest(@NotNull UUID planId, @Min(0) int scenarioIndex,
                                  @NotNull @Min(1) Integer expectedRevision,
                                  @AssertTrue(message="Review the scenario and approve sandbox execution") boolean approved) {}
     public record Execution(UUID id, UUID planId, int scenarioIndex, int expectedStatus, int actualStatus,
                             boolean passed, long durationMs, String responseBody, Instant createdAt,
-                            int scenarioRevision, Scenario requestSnapshot) {}
+                            int scenarioRevision, Scenario requestSnapshot, Map<String,List<String>> responseHeaders,
+                            boolean bodyTruncated, List<AssertionResult> assertionResults) {
+        public Execution(UUID id, UUID planId, int scenarioIndex, int expectedStatus, int actualStatus,
+                         boolean passed, long durationMs, String responseBody, Instant createdAt,
+                         int scenarioRevision, Scenario requestSnapshot) {
+            this(id,planId,scenarioIndex,expectedStatus,actualStatus,passed,durationMs,responseBody,createdAt,
+                    scenarioRevision,requestSnapshot,Map.of(),false,List.of());
+        }
+    }
     public record Analysis(String mode, String explanation) {}
 }

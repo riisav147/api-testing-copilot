@@ -1,7 +1,9 @@
+import AssertionEditor from './AssertionEditor.jsx';
+import { assertionDrafts, parseAssertions } from './assertionDraft.js';
 import React, { useId, useState } from 'react';
 import { formatRequest, fromFields, parseRequest, toFields } from './scenarioDraft.js';
 
-export default function ScenarioEditor({ scenario, revision, statuses, queryNames, busy, onSave, onCancel }) {
+export default function ScenarioEditor({ scenario, revision, statuses, queryNames, endpoint, busy, onSave, onCancel }) {
   const id = useId();
   const canForm = scenario.body == null || (typeof scenario.body === 'object' && !Array.isArray(scenario.body));
   const [mode, setMode] = useState(canForm ? 'form' : 'json');
@@ -10,6 +12,8 @@ export default function ScenarioEditor({ scenario, revision, statuses, queryName
   const [bodyEnabled, setBodyEnabled] = useState(scenario.body != null);
   const [json, setJson] = useState(() => formatRequest(scenario));
   const [status, setStatus] = useState(scenario.expectedStatus);
+  const [checks, setChecks] = useState(() => assertionDrafts(scenario.assertions));
+  const responseSchema = endpoint?.contract.responses?.[status]?.content?.['application/json']?.schema;
   const [error, setError] = useState('');
   function request() { return mode === 'json' ? parseRequest(json) : fromFields(fields, queries, bodyEnabled); }
   function switchMode(next) {
@@ -27,11 +31,11 @@ export default function ScenarioEditor({ scenario, revision, statuses, queryName
   function reset() {
     setMode(canForm ? 'form' : 'json'); setFields(canForm ? toFields(scenario.body ?? null) : []);
     setQueries(Object.entries(scenario.query).map(([name, value]) => ({ name, value })));
-    setBodyEnabled(scenario.body != null); setJson(formatRequest(scenario)); setStatus(scenario.expectedStatus); setError('');
+    setBodyEnabled(scenario.body != null); setJson(formatRequest(scenario)); setStatus(scenario.expectedStatus); setChecks(assertionDrafts(scenario.assertions)); setError('');
   }
   async function save(e) {
     e.preventDefault();
-    try { setError(''); await onSave({ ...request(), expectedStatus: Number(status), expectedRevision: revision }); }
+    try { setError(''); await onSave({ ...request(), expectedStatus: Number(status), expectedRevision: revision, assertions: parseAssertions(checks) }); }
     catch (e) { setError(e.message); }
   }
   function update(setter, index, patch) { setter(rows => rows.map((row, i) => i === index ? { ...row, ...patch } : row)); }
@@ -59,6 +63,7 @@ export default function ScenarioEditor({ scenario, revision, statuses, queryName
       <label htmlFor={`${id}-status`} className="status-label">Expected HTTP status</label>
       <select id={`${id}-status`} value={status} onChange={e => setStatus(e.target.value)}>{statuses.map(code => <option key={code} value={code}>{code}</option>)}</select>
       <p className="field-help">Choose a documented response status. Changing an expectation does not establish that the API is correct.</p>
+      <AssertionEditor rows={checks} onChange={setChecks} responseSchema={responseSchema}/>
       {error && <p className="editor-error" role="alert">{error}</p>}
       <div className="editor-actions"><button className="button primary" type="submit">{busy ? 'Saving…' : 'Save changes'}</button><button className="button subtle" type="button" onClick={onCancel}>Cancel</button></div>
     </fieldset>
