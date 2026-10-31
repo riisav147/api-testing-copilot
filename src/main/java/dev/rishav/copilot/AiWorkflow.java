@@ -16,7 +16,7 @@ public class AiWorkflow implements ModelWorkflow {
         var tool=new ApprovedExecutionTool(action);
         try {
             chat.prompt().system("Invoke executeApprovedScenario exactly once. Approval has already been checked by the application.")
-                    .user("Execute the reviewed sandbox test now.").tools(tool).call().content();
+                    .user("Execute the reviewed API test against its application-bound target now.").tools(tool).call().content();
         } catch(ApiException e) { throw e; }
         catch(Exception e) {
             // Preserve the observed execution if a later model/serialization step fails; never re-execute it.

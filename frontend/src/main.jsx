@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 import { CHECK_LABELS } from './AssertionEditor.jsx';
+import EnvironmentPanel from './EnvironmentPanel.jsx';
 import RuleCoverage from './RuleCoverage.jsx';
 import ProjectHistory from './ProjectHistory.jsx';
 import ScenarioEditor from './ScenarioEditor.jsx';
@@ -22,6 +23,9 @@ function App() {
   const [workspace,setWorkspace]=useState(null);
   const [projectName,setProjectName]=useState('');
   const [deleteConfirm,setDeleteConfirm]=useState(false);
+  const [target,setTarget]=useState(null);
+  const [configBusy,setConfigBusy]=useState(false);
+  const [attemptMessage,setAttemptMessage]=useState('');
   const [info, setInfo] = useState(null);
   const [name, setName] = useState('Catalog API');
   const [content, setContent] = useState('');
@@ -40,7 +44,7 @@ function App() {
   const [conflict, setConflict] = useState(false);
   const [notice, setNotice] = useState('');
   const [dragging, setDragging] = useState(false);
-  const locked = !!busy || editing;
+  const locked = !!busy || editing || configBusy;
 
 
   useEffect(() => { refreshProjects().then(async () => {
@@ -48,7 +52,7 @@ function App() {
     if(savedId) { try { await openProject(savedId,localStorage.getItem('copilot-plan')); } catch { localStorage.removeItem('copilot-project'); localStorage.removeItem('copilot-plan'); } }
   }).catch(e=>setError(e.message)); }, []);
   useEffect(() => { api('/info').then(setInfo).catch(() => setError('Backend unavailable. Start Spring Boot on port 8080.')); }, []);
-  useEffect(() => { setApproved(false); }, [selected, plan, editing]);
+  useEffect(() => { setApproved(false); }, [selected, plan, editing, target]);
   const scenario = plan?.scenarios[selected];
   const result = results[selected];
   const analysis = analyses[selected];
@@ -139,7 +143,13 @@ function App() {
   }
   async function execute() {
     await task('Executing approved scenario', async () => {
-      const observed = await api('/executions', { planId: plan.id, scenarioIndex: selected, expectedRevision: revision, approved });
+      const payload={planId:plan.id,scenarioIndex:selected,expectedRevision:revision,approved,environmentId:target?.id??null};
+      const key=`copilot-approval:${plan.id}:${selected}:${revision}:${target?.id||'sandbox'}:${target?.revision||0}`;
+      let approvalId=localStorage.getItem(key);
+      if(!approvalId) {const granted=await api('/approvals',payload);approvalId=granted.id;localStorage.setItem(key,approvalId);}
+      let observed;
+      try {observed=await api('/executions',{...payload,approvalId});localStorage.removeItem(key);setAttemptMessage('');}
+      catch(error) {try {const attempt=await api(`/approvals/${approvalId}/attempt`);setAttemptMessage(`Approval ${approvalId}: ${attempt.state}. Repeating this submission reuses the same approval. If the outcome is unknown, inspect the target before editing and reviewing a new request.`);}catch{} throw error;}
       setResults(previous => ({ ...previous, [selected]: observed }));
       setAnalyses(previous => { const next = { ...previous }; delete next[selected]; return next; });
       setApproved(false); await refreshHistory();
@@ -181,18 +191,20 @@ function App() {
         </section>
         <div className="section-heading workbench-heading"><div><h2>Scenario workbench</h2><p>{plan ? `${plan.scenarios.length} scenarios grounded in ${plan.evidence.length} evidence chunks.` : 'Select an operation to explore its test coverage.'}</p></div>{plan && <button className="button subtle" onClick={downloadPlan}>↓ Export JSON</button>}</div>
         <div className="operation-bar"><div><span className="operation-label">OPERATION</span><select aria-label="API operation" value={operation} disabled={!spec || locked} onChange={e => { setOperation(e.target.value); setPlan(null); setResults({}); setAnalyses({}); }}>{!spec && <option value="">Import a contract first</option>}{spec?.endpoints.map(e => <option key={e.key}>{e.key}</option>)}</select></div><button className="button primary" disabled={!spec || locked} onClick={generate}>{busy === 'Generating scenarios' ? 'Generating…' : '✦ Generate scenarios'}</button></div>
+        <EnvironmentPanel projectId={workspace?.project.id} locked={locked} onTarget={e=>{setTarget(e);setApproved(false);setAttemptMessage('');}} onBusy={setConfigBusy}/>
         <RuleCoverage spec={spec} operation={operation} plan={plan} runKey={Object.values(results).map(r=>r.id).join(',')} locked={locked} onPlan={async updated=>{setPlan(updated);setApproved(false);await refreshHistory();}} onSelect={index=>{setSelected(index);setView('scenarios');}}/>
         {!plan ? <section className="panel empty"><div className="empty-symbol">⌁</div><h3>Your next bug is hiding in an edge case.</h3><p>Load the sample, import its contract, then generate scenarios<br/>for <code>POST /products</code> to find the boundary mismatch.</p><div className="category-legend"><span>● Positive</span><span>● Negative</span><span>● Edge cases</span></div></section> : <>
           <div className="metrics"><div><small>SCENARIOS</small><strong>{plan.evaluation.total}<span>ready to review</span></strong></div><div><small title="How many of positive, negative and edge categories are present. This is not code coverage.">CATEGORY COVERAGE</small><strong>{Math.round(plan.evaluation.categoryCoverage * 100)}%<span>of 3 categories</span></strong></div><div><small title="Citations identify the source context; they do not prove that a test is correct.">SOURCE CITATIONS</small><strong>{Math.round(plan.evaluation.sourceCitationCoverage * 100)}%<span>provenance, not correctness</span></strong></div><div><small>EXECUTED</small><strong>{Object.entries(results).filter(([index, value]) => value.scenarioRevision === plan.scenarioRevisions[index]).length}<span>of {plan.scenarios.length} current revisions</span></strong></div></div>
           <div className="tabs" role="tablist" aria-label="Plan view"><button disabled={locked} role="tab" aria-selected={view === 'scenarios'} onClick={() => setView('scenarios')}>Scenarios <span>{plan.scenarios.length}</span></button><button disabled={locked} role="tab" aria-selected={view === 'evidence'} onClick={() => setView('evidence')}>Retrieved evidence <span>{plan.evidence.length}</span></button></div>
           {view === 'evidence' ? <section className="evidence-list">{plan.evidence.map(e => <article key={e.id} className="panel evidence"><div><b>Source</b><code>{e.id}</code><span>Score {e.score.toFixed(3)}</span></div><pre>{e.content}</pre></article>)}</section> : <div className="workbench"><section className="scenario-list">{plan.scenarios.map((s, i) => <button key={i} disabled={locked} className={`scenario-card ${selected === i ? 'selected' : ''}`} onClick={() => setSelected(i)}><div><span className={`badge ${s.category.toLowerCase()}`}>{s.category}</span><span className="case-id">TC-{String(i + 1).padStart(2, '0')}</span></div><h3>{s.title}</h3><p><b>{s.method}</b> {s.path}</p><footer><span>Expected <b>{s.expectedStatus}</b></span><span className={results[i]?.scenarioRevision === plan.scenarioRevisions[i] ? results[i].passed ? 'pass' : 'fail' : ''}>{results[i] ? results[i].scenarioRevision !== plan.scenarioRevisions[i] ? '○ Previous revision' : results[i].passed ? '● Passed' : '● Failed' : '○ Not run'}</span></footer></button>)}</section>
-            <section className="panel inspector"><div className="inspector-title"><h3>Request inspector</h3><span className="case-id">TC-{String(selected + 1).padStart(2, '0')}</span></div><div className="request-line"><b>{scenario.method}</b><code>/sandbox{scenario.path}</code></div><p className="rationale">{scenario.rationale}</p><p className="revision">Saved revision {revision}{revision > 1 ? ' · Edited request; the original generated rationale is retained for context.' : ''}</p>
+            <section className="panel inspector"><div className="inspector-title"><h3>Request inspector</h3><span className="case-id">TC-{String(selected + 1).padStart(2, '0')}</span></div><div className="request-line"><b>{scenario.method}</b><code>{target?target.baseUrl:'/sandbox'}{scenario.path}</code></div><p className="rationale">{scenario.rationale}</p><p className="revision">Saved revision {revision}{revision > 1 ? ' · Edited request; the original generated rationale is retained for context.' : ''}</p>
               {editing ? <ScenarioEditor key={`${plan.id}-${selected}-${revision}`} scenario={scenario} revision={revision} statuses={[...(endpoint?.statuses || [])].sort((a,b) => a-b)} queryNames={queryNames} endpoint={endpoint} busy={!!busy} onSave={saveScenario} onCancel={() => setEditing(false)}/> : <><div className="request-heading"><h4>REQUEST BODY & QUERY</h4><button className="button subtle" disabled={!!busy} onClick={() => { setEditing(true); setNotice(''); }}>Edit request</button></div><pre>{JSON.stringify({ query: scenario.query, body: scenario.body }, null, 2)}</pre></>}
               {!editing && <section className="saved-checks"><h4>RESPONSE CHECKS</h4><p>HTTP status equals {scenario.expectedStatus}</p>{scenario.assertions?.map((check,i) => <p key={i}>{CHECK_LABELS[check.kind]} · {check.target || 'whole body'}{check.kind !== 'JSON_EXISTS' && <> · {JSON.stringify(check.expected)}</>}</p>)}</section>}
-              <details><summary>Supporting sources ({scenario.sourceIds.length})</summary>{scenario.sourceIds.map(id => <code className="source-id" key={id}>{id}</code>)}</details><div className="execution-box"><div className="target"><span>◎ LOCAL SANDBOX ONLY</span><b>Expected HTTP {scenario.expectedStatus}</b></div><label className="approval"><input type="checkbox" checked={approved} disabled={locked} onChange={e => setApproved(e.target.checked)}/><span>I reviewed revision {revision} and approve running it against the bundled sandbox.</span></label><button className="button primary run" disabled={!approved || locked} onClick={execute}>{busy === 'Executing approved scenario' ? 'Executing…' : '▷ Execute approved scenario'}</button></div>
+              <details><summary>Supporting sources ({scenario.sourceIds.length})</summary>{scenario.sourceIds.map(id => <code className="source-id" key={id}>{id}</code>)}</details><div className="execution-box"><div className="target"><span>◎ {target ? `${target.name} · ${target.baseUrl} · revision ${target.revision}` : 'BUNDLED LOCAL SANDBOX'}</span><b>Expected HTTP {scenario.expectedStatus}</b></div><label className="approval"><input type="checkbox" checked={approved} disabled={locked} onChange={e => setApproved(e.target.checked)}/><span>I reviewed revision {revision} and approve running it against {target ? target.baseUrl : 'the bundled sandbox'}.</span></label><button className="button primary run" disabled={!approved || locked} onClick={execute}>{busy === 'Executing approved scenario' ? 'Executing…' : '▷ Execute approved scenario'}</button></div>
+              {attemptMessage&&<p role="status" className="editor-error">{attemptMessage}</p>}
               {result && <div className={`result ${result.passed ? 'passed' : 'failed'}`} aria-live="polite"><div><b>{historicalResult ? `Previous result · revision ${result.scenarioRevision}` : result.passed ? '✓ All configured checks passed' : '× Response checks did not all pass'}</b><span>{result.durationMs} ms</span></div><p>{historicalResult && <>This result belongs to an earlier request. The current revision has not run.<br/></>}Expected {result.expectedStatus} · Observed {result.actualStatus}</p>{result.bodyTruncated && <p className="editor-error" role="status">Response truncated at 8,192 bytes. JSON checks could not be evaluated.</p>}
               <div className="assertion-results" aria-label="Assertion results">{result.assertionResults?.map((check,i) => <article className={`assertion-result ${check.outcome.toLowerCase()}`} key={i}><b>{check.outcome} · {CHECK_LABELS[check.check] || 'HTTP status'} · {check.target || 'whole body'}</b><p>{check.detail}</p><dl><dt>Expected</dt><dd>{JSON.stringify(check.expected)}</dd><dt>Actual</dt><dd>{check.actual === null ? 'null or unavailable — see detail' : JSON.stringify(check.actual)}</dd></dl></article>)}</div>
-              <h4>RESPONSE BODY</h4><pre>{result.responseBody}</pre><details><summary>Response headers</summary><pre>{JSON.stringify(result.responseHeaders,null,2)}</pre></details><details><summary>Request executed at revision {result.scenarioRevision}</summary><pre>{JSON.stringify(result.requestSnapshot, null, 2)}</pre></details><button className="button subtle" disabled={locked} onClick={() => task('Analysing result', async () => { const a = await api(`/executions/${result.id}/analysis`, {}); setAnalyses(previous => ({ ...previous, [selected]: a })); await refreshHistory(); })}>{busy === 'Analysing result' ? 'Analysing…' : 'Explain this result →'}</button>{analysis && <p className="analysis"><span className="badge">{analysis.mode} analysis</span><br/>{analysis.explanation}</p>}</div>}
+              <p>Executed target: {result.target || 'bundled localhost sandbox'}</p><h4>RESPONSE BODY</h4><pre>{result.responseBody}</pre><details><summary>Response headers</summary><pre>{JSON.stringify(result.responseHeaders,null,2)}</pre></details><details><summary>Request executed at revision {result.scenarioRevision}</summary><pre>{JSON.stringify(result.requestSnapshot, null, 2)}</pre></details><button className="button subtle" disabled={locked} onClick={() => task('Analysing result', async () => { const a = await api(`/executions/${result.id}/analysis`, {}); setAnalyses(previous => ({ ...previous, [selected]: a })); await refreshHistory(); })}>{busy === 'Analysing result' ? 'Analysing…' : 'Explain this result →'}</button>{analysis && <p className="analysis"><span className="badge">{analysis.mode} analysis</span><br/>{analysis.explanation}</p>}</div>}
             </section></div>}
           <div className="evaluation-notes">{plan.evaluation.warnings.map((warning, i) => <p key={i}>ⓘ {warning}</p>)}</div>
         </>}

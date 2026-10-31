@@ -11,7 +11,7 @@ public class ApiController {
     private final CopilotService service;
     public ApiController(CopilotService service) { this.service=service; }
     @GetMapping("/info") public Map<String,Object> info() {
-        return Map.of("mode",service.mode(),"executionTarget","bundled localhost sandbox only","storage","persistent workspace database; AI vectors persist in pgvector");
+        return Map.of("mode",service.mode(),"executionTarget","bundled sandbox or explicitly approved allowlisted local development API","storage","persistent workspace database; AI vectors persist in pgvector");
     }
     @GetMapping("/projects") public List<Project> projects() { return service.projects(); }
     @GetMapping("/projects/{id}") public Workspace workspace(@PathVariable UUID id) { return service.workspace(id); }
@@ -27,6 +27,12 @@ public class ApiController {
     @GetMapping("/specifications/{id}/coverage") public ContractCoverage.Report coverage(@PathVariable UUID id,@RequestParam String endpointKey,@RequestParam(required=false) UUID planId) { return service.coverage(id,endpointKey,planId); }
     @PostMapping("/specifications/{id}/conflicts") public ContractCoverage.Report resolve(@PathVariable UUID id,@RequestParam String endpointKey,@Valid @RequestBody ConflictDecision decision) { return service.resolve(id,endpointKey,decision); }
     @PostMapping("/plans/{id}/missing-tests") public Plan fill(@PathVariable UUID id,@Valid @RequestBody FillMissingRequest request) { return service.fillMissing(id,request); }
+    @GetMapping("/projects/{id}/environments") public List<TargetEnvironment> environments(@PathVariable UUID id) { return service.environments(id); }
+    @PostMapping("/projects/{id}/environments") public TargetEnvironment createEnvironment(@PathVariable UUID id,@Valid @RequestBody EnvironmentRequest r) { return service.saveEnvironment(id,null,r); }
+    @PutMapping("/projects/{id}/environments/{envId}") public TargetEnvironment updateEnvironment(@PathVariable UUID id,@PathVariable UUID envId,@Valid @RequestBody EnvironmentRequest r) { return service.saveEnvironment(id,envId,r); }
+    @PostMapping("/projects/{id}/environments/{envId}/check") public Map<String,Object> connection(@PathVariable UUID id,@PathVariable UUID envId) { return service.checkConnection(id,envId); }
+    @PostMapping("/approvals") public Approval approval(@Valid @RequestBody ApprovalRequest r) { return service.approve(r); }
+    @GetMapping("/approvals/{id}/attempt") public Attempt attempt(@PathVariable UUID id) { return service.attempt(id); }
     @PostMapping("/executions") public Execution execute(@Valid @RequestBody ExecuteRequest request) { return service.execute(request); }
     @PostMapping("/executions/{id}/analysis") public Analysis analyse(@PathVariable UUID id) { return service.analyse(id); }
 }

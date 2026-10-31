@@ -46,13 +46,35 @@ Project data is retained until explicitly deleted. The UI asks you to confirm de
 
 Workspace JDBC settings are `copilot.storage-url`, `copilot.storage-user` and `copilot.storage-password`, separate from the AI vector database settings. The verified default is embedded H2. Keep `.tools/` private: it contains imported documents and response snapshots. Switching between demo and AI keeps saved records, but imports indexed only in demo must be reimported as a new version to create AI vectors. AI imports are not automatically re-embedded at startup.
 
+## Development API environments and durable approvals
+
+The execution environment defaults to the bundled sandbox. A project can also have named local development environments with a base URL, authentication mode and header references. This release allows only HTTP origins with numeric host `127.0.0.1`, ports 1024–65535, and an exact entry in the server's `copilot.allowed-origins` setting. The default allowlist is `http://127.0.0.1:8081`. Configure a comma-separated list through `COPILOT_ALLOWED_ORIGINS` and restart to change it. DNS names, remote/private-network hosts, URL credentials/query/fragment, encoded prefixes and redirects are excluded from this first development-target implementation. Specification `servers` URLs never select a target.
+
+Try a second controlled API in another terminal:
+
+```sh
+python3 scripts/dev-api.py
+```
+
+In **Execution environment**, expand **Add or update a development environment**, keep the default base URL and authentication None, confirm authorization, and save. Select **Check connection with HEAD**, then review a request and approve execution against the displayed URL. The second API accepts zero-price products and stores created products in disposable memory until it restarts. It is a development fixture, not a deployed backend. HEAD checks establish reachability only and can return authentication or method errors from your own API.
+
+Bearer and API-key modes accept a **server environment-variable name** such as `MY_DEV_API_TOKEN`; they never accept or return the secret itself. Set that variable in the backend process environment before starting it. For the supplied fixture, `DEV_API_TOKEN` enables optional bearer authentication when set in both processes. Additional headers map names to variable references, for example `{"X-Test-Header":"MY_TEST_HEADER"}`. Values are resolved only on the server. Hop-by-hop, Host and proxy authorization headers are blocked. Environment configuration is saved with a revision; changes invalidate unused approvals.
+
+Configured credential values are masked in captured request/response evidence and assertion results before persistence or the execution tool returns. Sensitive cookie/authorization response headers are masked. Raw credentials are not stored in environment records, logs or provider prompts by this feature. This redaction cannot identify every unrelated or transformed secret an API might return; use synthetic development data and keep secrets out of ordinary contracts, bodies and assertions. The database is local and is not configured as an encrypted credential vault.
+
+The UI first creates a durable approval for the exact plan/scenario revision and environment. Approvals expire after ten minutes and include a request/credential fingerprint, environment revision and target. Execution requires that approval ID. An attempt is committed as STARTED before sending HTTP; completion stores the result and COMPLETED state in one transaction. A repeated submission with the same matching approval returns its saved completed result. Failures after an attempt starts are conservatively UNKNOWN; interrupted STARTED attempts become UNKNOWN at startup. UNKNOWN approvals never execute again. Inspect the API's actual state before deliberately editing/reviewing a new request and issuing a fresh approval. This prevents duplicate submission through one approval; it does not promise exactly-once side effects across new approvals, processes or target systems.
+
+The browser retains the pending approval ID for an action so a network retry can reuse it. Selecting another environment clears the visible approval; it is not restored as checked after refresh. Completed executions and history display their target. No application-level automatic retry is used for writes. HTTP execution has a five-second deadline covering response capture; capture stops after 8,192 bytes plus one truncation lookahead byte.
+
+API clients now call `POST /api/approvals` with `{planId, scenarioIndex, expectedRevision, environmentId, approved:true}` (`environmentId:null` selects the sandbox), then send its `id` as `approvalId` to `/api/executions` with the same fields. Missing durable approval is rejected. `GET /api/approvals/{id}/attempt` returns NOT_STARTED, STARTED, COMPLETED or UNKNOWN and the completed execution ID when available. Saved approval/attempt records cascade with project deletion. The default workspace remains a single-process local application.
+
 ## Contract rules and missing tests
 
 The **Contract rules and missing tests** panel links supported request probes to the exact specification version and JSON Pointer in the original contract. Local references link to their component definitions. Expand **View exact contract rule** to see the source value highlighted; **Review case** selects a matching saved scenario. This works for existing saved plans as well as new ones.
 
 Supported probes cover required top-level JSON body fields, inclusive numeric minimum/maximum and one unit outside those bounds, bounded string minLength/maxLength and one character outside, and enum examples (first valid value and an excluded string when applicable). Numeric fields with exclusive bounds/multipleOf or fractional integer bounds, strings with pattern/format, nested request rules and other schema constructs are outside this first coverage map. Negative cases require an explicitly documented HTTP 400; successful probes require a documented 2xx. Enumeration and length probes are bounded; length limits above 1,000 are omitted. Reports contain at most 64 probes.
 
-States are **MISSING**, **GENERATED**, **PASSED** and **FAILED**. Matching uses the saved input probe and expected status, not a model-supplied coverage label. Results count only when their scenario revision matches the current saved case. For matching cases with executions, the latest run per case determines pass/fail; any nonpassing result makes the row failed. A passing row means its configured assertions passed, not that the source rule or all business behavior has been proved correct. Unsupported rules are outside the denominator; this is separate from category coverage and code coverage.
+States are **MISSING**, **GENERATED**, **PASSED** and **FAILED**. Matching uses the saved input probe and expected status, not a model-supplied coverage label. Results count only when their scenario revision matches the current saved case. For matching cases with executions, the latest run per case across targets determines pass/fail (inspect the recorded target when comparing environments); any nonpassing result makes the row failed. A passing row means its configured assertions passed, not that the source rule or all business behavior has been proved correct. Unsupported rules are outside the denominator; this is separate from category coverage and code coverage.
 
 **Generate missing tests** appends deterministic reviewable cases to the same plan without replacing edits, assertions or existing revisions. The endpoint requires the complete current revision list. Repeated calls avoid duplicate represented probes; when a previously generated case is edited away from a probe, a newly named case can fill the gap while preserving the edit. Plans still hold at most 12 cases; remaining gaps stay visible. Fixture assumptions and unrelated constraints still require review, particularly for unfamiliar APIs. Generation does not execute the added requests.
 
@@ -91,7 +113,7 @@ Limits: 20 additional assertions per scenario, 300-character targets, 8,000-char
 | Analysis | Deterministic explanation | Model explanation using the recorded result, with no tools |
 | Storage | Embedded workspace database | Embedded workspace database plus PostgreSQL vectors |
 
-Both modes enforce the same scenario validation, explicit execution approval, fixed sandbox target, method/path allowlist, no redirects, request timeout, response size limit, and workspace capacity limits. Source citations are checked against the retrieved context. A citation does **not** prove that an assertion is correct.
+Both modes enforce the same scenario validation, explicit execution approval, application-owned target selection, sandbox method/path allowlist, no redirects, request timeout, response size limit, and workspace capacity limits. Source citations are checked against the retrieved context. A citation does **not** prove that an assertion is correct.
 
 ## Enable AI mode
 
@@ -165,7 +187,12 @@ All JSON endpoints are under `/api`. Error responses use Spring `ProblemDetail`.
 | GET | `/api/specifications/{id}/coverage?endpointKey=...&planId=...` | Coverage report; omit planId to review before generation |
 | POST | `/api/specifications/{id}/conflicts?endpointKey=...` | Save `{conflictId, choice, reason}` |
 | POST | `/api/plans/{id}/missing-tests` | Append missing probes using `{expectedRevisions: [...]}` |
-| POST | `/api/executions` | Execute `{planId, scenarioIndex, expectedRevision, approved: true}` |
+| GET/POST | `/api/projects/{id}/environments` | List/create environments with authorization and variable references |
+| PUT | `/api/projects/{id}/environments/{envId}` | Update environment using expectedRevision |
+| POST | `/api/projects/{id}/environments/{envId}/check` | HEAD reachability check |
+| POST | `/api/approvals` | Create ten-minute approval for request and target |
+| GET | `/api/approvals/{id}/attempt` | Read durable attempt outcome |
+| POST | `/api/executions` | Execute with matching approvalId, environmentId and reviewed revision |
 | POST | `/api/executions/{id}/analysis` | Explain a recorded result |
 | GET | `/actuator/health` | Backend health |
 
@@ -179,11 +206,11 @@ All JSON endpoints are under `/api`. Error responses use Spring `ProblemDetail`.
 
 ## Scope and limitations
 
-This is a **single-user localhost application**, not an authenticated production service. It supports a useful subset of OpenAPI 3 JSON/YAML: ordinary operations, local nonrecursive references, parameters, JSON request schemas and explicit numeric response statuses. It does not implement complete OpenAPI/JSON Schema validation, recursive models, reference sibling merging, composed schemas, XML/multipart test generation, auth flows, or wildcard response-status matching. Demo cases are templates and can require manual fixture adjustments for unfamiliar APIs.
+This is a **single-user localhost application**, not an authenticated production service. It supports a useful subset of OpenAPI 3 JSON/YAML: ordinary operations, local nonrecursive references, parameters, JSON request schemas and explicit numeric response statuses. It does not implement complete OpenAPI/JSON Schema validation, recursive models, reference sibling merging, composed schemas, XML/multipart test generation, OAuth login/refresh flows, or wildcard response-status matching. Demo cases are templates and can require manual fixture adjustments for unfamiliar APIs.
 
-Only GET `/products`, GET `/products/{id}`, and POST `/products` may execute, always against the bundled sandbox on the application's own loopback port. Specification `servers` URLs and generated hostnames are never used. HTTP status and configured response assertions run deterministically. Response schema validation covers only the documented subset; business-state assertions are future work.
+The bundled sandbox allows GET `/products`, GET `/products/{id}` and POST `/products`. Explicitly approved development environments may execute the selected imported operation on their allowlisted local base URL. Specification `servers` URLs and generated hostnames are never used. HTTP status and configured response assertions run deterministically. Response schema validation covers only the documented subset; business-state assertions are future work.
 
-Imports, plans, revisions, executions and explanations survive restarts. Workspace caps are 200 imports, 1,000 plans and 5,000 executions; delete unused projects to free capacity. A single service lock serializes expensive operations, making capacity checks simple but limiting concurrency. Durable approval workflows, cross-request idempotency, distributed job queues, and comprehensive telemetry are not implemented.
+Imports, plans, revisions, executions and explanations survive restarts. Workspace caps are 200 imports, 1,000 plans and 5,000 executions; delete unused projects to free capacity. A single service lock serializes expensive operations, making capacity checks simple but limiting concurrency. Durable single-use approvals and per-approval duplicate protection are implemented. Distributed jobs, multi-process coordination and comprehensive telemetry remain future work.
 
 ## References
 

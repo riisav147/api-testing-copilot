@@ -47,11 +47,17 @@ public final class Models {
                                       @Min(100) @Max(599) int expectedStatus, List<ResponseAssertion> assertions) {}
     public record ExecuteRequest(@NotNull UUID planId, @Min(0) int scenarioIndex,
                                  @NotNull @Min(1) Integer expectedRevision,
-                                 @AssertTrue(message="Review the scenario and approve sandbox execution") boolean approved) {}
+                                 @AssertTrue(message="Review the scenario and approve sandbox execution") boolean approved, UUID environmentId, UUID approvalId) {}
     public record Execution(UUID id, UUID planId, int scenarioIndex, int expectedStatus, int actualStatus,
                             boolean passed, long durationMs, String responseBody, Instant createdAt,
                             int scenarioRevision, Scenario requestSnapshot, Map<String,List<String>> responseHeaders,
-                            boolean bodyTruncated, List<AssertionResult> assertionResults) {
+                            boolean bodyTruncated, List<AssertionResult> assertionResults,String target) {
+        public Execution(UUID id, UUID planId, int scenarioIndex, int expectedStatus, int actualStatus,
+                         boolean passed, long durationMs, String responseBody, Instant createdAt,
+                         int scenarioRevision, Scenario requestSnapshot,Map<String,List<String>> responseHeaders,
+                         boolean bodyTruncated,List<AssertionResult> assertionResults) {
+            this(id,planId,scenarioIndex,expectedStatus,actualStatus,passed,durationMs,responseBody,createdAt,scenarioRevision,requestSnapshot,responseHeaders,bodyTruncated,assertionResults,"bundled localhost sandbox");
+        }
         public Execution(UUID id, UUID planId, int scenarioIndex, int expectedStatus, int actualStatus,
                          boolean passed, long durationMs, String responseBody, Instant createdAt,
                          int scenarioRevision, Scenario requestSnapshot) {
@@ -59,6 +65,17 @@ public final class Models {
                     scenarioRevision,requestSnapshot,Map.of(),false,List.of());
         }
     }
+    public record TargetEnvironment(UUID id,UUID projectId,String name,String baseUrl,int revision,
+                                    String authType,String authHeader,String secretRef,Map<String,String> headerRefs) {}
+    public record EnvironmentRequest(@NotBlank @Size(max=100) String name,@NotBlank @Size(max=300) String baseUrl,
+                                     @NotBlank @Pattern(regexp="NONE|BEARER|API_KEY") String authType,
+                                     String authHeader,String secretRef,@NotNull Map<String,String> headerRefs,
+                                     @AssertTrue boolean authorized,@Min(0) int expectedRevision) {}
+    public record ApprovalRequest(@NotNull UUID planId,@Min(0) int scenarioIndex,@NotNull @Min(1) Integer expectedRevision,
+                                  UUID environmentId,@AssertTrue boolean approved) {}
+    public record Approval(UUID id,UUID planId,int scenarioIndex,int scenarioRevision,UUID environmentId,
+                           String requestHash,int environmentRevision,Instant expiresAt,String target) {}
+    public record Attempt(String state,UUID executionId) {}
     public record ConflictDecision(@NotBlank @Size(max=2000) String conflictId,
                                    @NotBlank @Pattern(regexp="USE_CONTRACT|REVISE_CONTRACT") String choice,
                                    @NotBlank @Size(max=1000) String reason) {}

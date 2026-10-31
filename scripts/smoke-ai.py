@@ -51,7 +51,8 @@ def main():
         request("/api/executions", {"planId": plan["id"], "scenarioIndex": 0, "expectedRevision": plan["scenarioRevisions"][0], "approved": False}, expected=400)
         report["checks"].append("unapproved-execution-rejected")
         index = next((i for i, s in enumerate(plan["scenarios"]) if s["category"] == "POSITIVE"), 0)
-        execution = request("/api/executions", {"planId": plan["id"], "scenarioIndex": index, "expectedRevision": plan["scenarioRevisions"][index], "approved": True})
+        approval = request("/api/approvals", {"planId": plan["id"], "scenarioIndex": index, "expectedRevision": plan["scenarioRevisions"][index], "approved": True})
+        execution = request("/api/executions", {"approvalId": approval["id"], "planId": plan["id"], "scenarioIndex": index, "expectedRevision": plan["scenarioRevisions"][index], "approved": True})
         if execution["planId"] != plan["id"] or execution["scenarioIndex"] != index:
             raise RuntimeError("Execution is not associated with the approved scenario")
         if execution["passed"] != all(check["outcome"] == "PASS" for check in execution["assertionResults"]):

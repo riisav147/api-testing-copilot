@@ -27,7 +27,7 @@ public class WorkspaceStore implements AutoCloseable {
         this.mapper=mapper; ds.setJdbcUrl(url); ds.setUsername(user); ds.setPassword(password); ds.setMaximumPoolSize(2);
         db=new JdbcTemplate(ds); tx=new TransactionTemplate(new DataSourceTransactionManager(ds));
         db.execute("CREATE TABLE IF NOT EXISTS workspace_migrations (version INTEGER PRIMARY KEY)");
-        for(int version=1;version<=2;version++) {
+        for(int version=1;version<=3;version++) {
             if(db.queryForObject("SELECT COUNT(*) FROM workspace_migrations WHERE version=?",Integer.class,version)!=0)continue;
             var sql=new ClassPathResource("db/workspace/V"+version+".sql").getContentAsString(StandardCharsets.UTF_8);
             for(String statement:sql.split(";")) if(!statement.isBlank()) db.execute(statement);
@@ -60,6 +60,18 @@ public class WorkspaceStore implements AutoCloseable {
         tx.executeWithoutResult(s->{db.update("DELETE FROM conflict_decisions WHERE id=?",decision.conflictId());
             db.update("INSERT INTO conflict_decisions(id,specification_id,payload) VALUES(?,?,?)",decision.conflictId(),specId.toString(),json(decision));});
     }
+    public void saveEnvironment(TargetEnvironment e,boolean create) {
+        if(create) db.update("INSERT INTO environments(id,project_id,payload) VALUES(?,?,?)",e.id().toString(),e.projectId().toString(),json(e));
+        else db.update("UPDATE environments SET payload=? WHERE id=?",json(e),e.id().toString());
+    }
+    public void saveApproval(Approval a) { db.update("INSERT INTO approvals(id,plan_id,payload) VALUES(?,?,?)",a.id().toString(),a.planId().toString(),json(a)); }
+    public Approval approval(UUID id) { var rows=db.query("SELECT payload FROM approvals WHERE id=?",(r,i)->decode(r.getString(1),Approval.class),id.toString());return rows.isEmpty()?null:rows.getFirst(); }
+    public Attempt attempt(UUID id) { var rows=db.query("SELECT * FROM execution_attempts WHERE approval_id=?",(r,i)->new Attempt(r.getString("state"),r.getString("execution_id")==null?null:UUID.fromString(r.getString("execution_id"))),id.toString());return rows.isEmpty()?null:rows.getFirst(); }
+    public void startAttempt(UUID id) { db.update("INSERT INTO execution_attempts(approval_id,state) VALUES(?,'STARTED')",id.toString()); }
+    public void uncertain(UUID id) { db.update("UPDATE execution_attempts SET state='UNKNOWN' WHERE approval_id=?",id.toString()); }
+    public void completeAttempt(UUID id,Execution e) { tx.executeWithoutResult(s->{saveExecution(e); db.update("UPDATE execution_attempts SET state='COMPLETED',execution_id=? WHERE approval_id=?",e.id().toString(),id.toString());}); }
+    public Execution execution(UUID id) { return db.queryForObject("SELECT payload FROM executions WHERE id=?",(r,i)->decode(r.getString(1),Execution.class),id.toString()); }
+    public void recoverAttempts() { db.update("UPDATE execution_attempts SET state='UNKNOWN' WHERE state='STARTED'"); }
     public void rename(UUID id,String name) { db.update("UPDATE projects SET name=? WHERE id=?",name,id.toString()); }
     public void markDeleting(UUID id) { db.update("UPDATE projects SET deleting=TRUE WHERE id=?",id.toString()); }
     public void delete(UUID id) { db.update("DELETE FROM projects WHERE id=?",id.toString()); }

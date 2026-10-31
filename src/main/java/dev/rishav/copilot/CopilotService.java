@@ -9,6 +9,9 @@ import static dev.rishav.copilot.Models.*;
 
 @Service
 public class CopilotService {
+    private DevelopmentTargets targets;
+    @org.springframework.beans.factory.annotation.Autowired
+    void targets(DevelopmentTargets targets) { this.targets=targets; }
     private final ContractCoverage coverage=new ContractCoverage();
     private final Map<String,ConflictDecision> decisions=new ConcurrentHashMap<>();
     private final WorkspaceStore store;
@@ -37,6 +40,7 @@ public class CopilotService {
         });
         store.records("plans",Plan.class).forEach(p -> plans.put(p.id(),p));
         store.records("executions",Execution.class).forEach(e -> executions.put(e.id(),e));
+        store.recoverAttempts();
         analyses.putAll(store.analyses()); store.decisions().forEach(d -> decisions.put(d.conflictId(),d));
     }
     public String mode() { return generator.mode(); }
@@ -87,14 +91,66 @@ public class CopilotService {
                 List.copyOf(scenarios),List.copyOf(revisions),plan.evidence(),evaluator.evaluate(scenarios),plan.createdAt());
         store.savePlan(updated,false); plans.put(id,updated); return updated;
     }
+    private TargetEnvironment environment(UUID projectId,UUID id) {
+        var e=store.records("environments",TargetEnvironment.class).stream().filter(v->v.id().equals(id)&&v.projectId().equals(projectId)).findFirst().orElseThrow(()->ApiException.badRequest("Environment does not belong to this project"));
+        targets.base(e.baseUrl());return e;
+    }
+    public List<TargetEnvironment> environments(UUID projectId) { activeProject(projectId);return store.records("environments",TargetEnvironment.class).stream().filter(e->e.projectId().equals(projectId)).toList(); }
+    public synchronized TargetEnvironment saveEnvironment(UUID projectId,UUID id,EnvironmentRequest r) {
+        activeProject(projectId);targets.validate(r);boolean create=id==null;
+        var old=create?null:environment(projectId,id);
+        if(!create&&r.expectedRevision()!=old.revision())throw new ApiException(HttpStatus.CONFLICT,"Environment changed. Reload its configuration.");
+        var e=new TargetEnvironment(create?UUID.randomUUID():id,projectId,r.name(),r.baseUrl().replaceAll("/+$",""),create?1:old.revision()+1,r.authType(),r.authHeader(),r.secretRef(),Map.copyOf(r.headerRefs()));
+        store.saveEnvironment(e,create);return e;
+    }
+    public Map<String,Object> checkConnection(UUID projectId,UUID environmentId) {
+        var e=environment(projectId,environmentId);
+        // HEAD only, no request body and no redirects; this is a reachability check, not application validation.
+        try {
+            var builder=java.net.http.HttpRequest.newBuilder(targets.base(e.baseUrl())).timeout(java.time.Duration.ofSeconds(5)).method("HEAD",java.net.http.HttpRequest.BodyPublishers.noBody());
+            targets.headers(e).forEach(builder::setHeader);
+            var response=java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(2)).followRedirects(java.net.http.HttpClient.Redirect.NEVER).build().send(builder.build(),java.net.http.HttpResponse.BodyHandlers.discarding());
+            return Map.of("target",e.baseUrl(),"status",response.statusCode(),"detail","HEAD response received; redirects were not followed.");
+        } catch(Exception failure) { throw ApiException.badRequest("Connection check failed. Verify the local API, allowlist and credential references."); }
+    }
+    private String requestHash(Plan p,int index,Map<String,String> headers) {
+        try {var mapper=new com.fasterxml.jackson.databind.ObjectMapper();return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(mapper.writeValueAsBytes(List.of(p.scenarios().get(index),new TreeMap<>(headers)))));}
+        catch(Exception e) { throw new IllegalStateException("Could not fingerprint request"); }
+    }
+    public synchronized Approval approve(ApprovalRequest r) {
+        if(!r.approved())throw ApiException.badRequest("Explicit approval is required");
+        var p=plan(r.planId());checkRevision(p,r.scenarioIndex(),r.expectedRevision());
+        var spec=saved.get(p.specificationId());requireResolved(spec,endpoint(p));
+        var e=r.environmentId()==null?null:environment(spec.projectId(),r.environmentId());
+        if(e!=null)targets.headers(e);
+        var approval=new Approval(UUID.randomUUID(),p.id(),r.scenarioIndex(),r.expectedRevision(),r.environmentId(),requestHash(p,r.scenarioIndex(),e==null?Map.of():targets.headers(e)),e==null?0:e.revision(),Instant.now().plusSeconds(600),e==null?"bundled localhost sandbox":e.baseUrl());
+        store.saveApproval(approval);return approval;
+    }
+    public synchronized Attempt attempt(UUID id) { if(store.approval(id)==null)throw ApiException.badRequest("Unknown approval");var a=store.attempt(id);return a==null?new Attempt("NOT_STARTED",null):a; }
     public synchronized Execution execute(ExecuteRequest request) {
-        if (!request.approved()) throw ApiException.badRequest("Explicit review and approval is required");
-        var plan=plan(request.planId());
-        checkRevision(plan,request.scenarioIndex(),request.expectedRevision());
-        var spec=saved.get(plan.specificationId()); requireResolved(spec,endpoint(plan));
-        capacity(executions,5000);
-        var execution=workflow.executeApproved(() -> runner.execute(plan,request.scenarioIndex()));
-        store.saveExecution(execution); executions.put(execution.id(),execution); return execution;
+        if(!request.approved())throw ApiException.badRequest("Explicit review and approval is required");
+        var p=plan(request.planId());checkRevision(p,request.scenarioIndex(),request.expectedRevision());
+        var spec=saved.get(p.specificationId());requireResolved(spec,endpoint(p));
+        if(request.approvalId()==null)throw ApiException.badRequest("Create a durable approval before execution");
+        var a=store.approval(request.approvalId());
+        if(a==null||!a.planId().equals(p.id())||a.scenarioIndex()!=request.scenarioIndex()||a.scenarioRevision()!=request.expectedRevision()
+                ||!Objects.equals(a.environmentId(),request.environmentId()))throw new ApiException(HttpStatus.CONFLICT,"Approval does not match this request and target");
+        var previous=store.attempt(a.id());
+        if(previous!=null) {
+            if(previous.state().equals("COMPLETED"))return store.execution(previous.executionId());
+            throw new ApiException(HttpStatus.CONFLICT,"Execution outcome is uncertain. This approval will not run again. Inspect the target before approving a new run.");
+        }
+        var e=request.environmentId()==null?null:environment(spec.projectId(),request.environmentId());
+        if(!a.expiresAt().isAfter(Instant.now())||(e!=null&&e.revision()!=a.environmentRevision()))throw new ApiException(HttpStatus.CONFLICT,"Approval expired or the environment changed. Review and approve again.");
+        var headers=e==null?Map.<String,String>of():targets.headers(e);
+        if(!a.requestHash().equals(requestHash(p,request.scenarioIndex(),headers)))throw new ApiException(HttpStatus.CONFLICT,"Request or credential configuration changed. Approve again.");
+        capacity(executions,5000);store.startAttempt(a.id());
+        try {
+            var execution=workflow.executeApproved(()->e==null?runner.execute(p,request.scenarioIndex()):targets.redact(runner.executeAt(p,request.scenarioIndex(),e,headers),e));
+            store.completeAttempt(a.id(),execution);executions.put(execution.id(),execution);return execution;
+        } catch(RuntimeException failure) {
+            store.uncertain(a.id());throw new ApiException(HttpStatus.BAD_GATEWAY,"Execution outcome is uncertain. No automatic retry was made. Inspect the target and check this approval's attempt state.");
+        }
     }
     public synchronized Analysis analyse(UUID id) {
         var execution=required(executions,id); plan(execution.planId());
@@ -163,7 +219,7 @@ public class CopilotService {
             rows.add(new ContractCoverage.Row(rule,state,List.copyOf(indexes)));
         }
         return new ContractCoverage.Report(specificationId,spec.version(),endpointKey,rows,coverage.conflicts(spec,rules,decisions),
-                "First 64 supported top-level JSON request rule probes only. Coverage records input probes and configured assertions, not code coverage or proof that the whole contract is correct. Numeric conflicts recognize field > number only.");
+                "First 64 supported top-level JSON request rule probes only. Coverage records input probes and configured assertions, not code coverage or proof that the whole contract is correct. Latest runs may be from different targets; inspect recorded execution targets. Numeric conflicts recognize field > number only.");
     }
     public synchronized ContractCoverage.Report resolve(UUID specId,String endpointKey,ConflictDecision decision) {
         var report=coverage(specId,endpointKey,null);

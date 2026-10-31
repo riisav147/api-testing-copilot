@@ -10,7 +10,7 @@ public class ApprovedExecutionTool {
     private Execution result;
     private boolean attempted;
     public ApprovedExecutionTool(Supplier<Execution> action) { this.action=action; }
-    @Tool(description="Execute the single already-reviewed and approved scenario against the local sandbox. No arguments are accepted.",returnDirect=true)
+    @Tool(description="Execute the single already-reviewed and approved scenario against the application-bound approved target. No arguments are accepted.",returnDirect=true)
     public synchronized Execution executeApprovedScenario() {
         if (result!=null) return result;
         if (attempted) throw new IllegalStateException("The one permitted execution attempt has already been used");

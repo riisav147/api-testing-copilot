@@ -18,6 +18,10 @@ class CopilotApiTest {
     @LocalServerPort int port;
     private final HttpClient client=HttpClient.newHttpClient();
     private HttpResponse<String> post(String path,Object value) throws Exception {
+        if(path.equals("/api/executions") && value instanceof Map<?,?> data && Boolean.TRUE.equals(data.get("approved")) && !data.containsKey("approvalId")) {
+            var approvalResponse=post("/api/approvals",value);
+            if(approvalResponse.statusCode()==200) {var updated=new LinkedHashMap<String,Object>();data.forEach((k,v)->updated.put(k.toString(),v));updated.put("approvalId",mapper.readTree(approvalResponse.body()).path("id").asText());value=updated;}
+        }
         return client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+port+path))
                 .header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(value))).build(),HttpResponse.BodyHandlers.ofString());
     }

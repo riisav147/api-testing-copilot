@@ -17,7 +17,7 @@ flowchart TD
     S --> A[Explicitly approved stored scenario]
     A --> W[Direct demo workflow or scoped AI tool]
     W --> R[Sandbox runner]
-    R --> M[Fixed loopback mock API]
+    R --> M[Bundled sandbox or approved allowlisted local API]
     M --> O[Observed execution]
     O --> F[Analysis with no tools]
 ```
@@ -38,8 +38,8 @@ flowchart TD
 1. The browser displays the generated request and requires explicit approval.
 2. The server checks approval again, resolves the stored plan, and checks the scenario index and reviewed revision. An outdated revision returns HTTP 409 before any execution tool is invoked.
 3. In AI mode a per-request tool wraps that fixed action. It accepts no model-supplied arguments and can attempt HTTP execution only once.
-4. The runner allows only the bundled fixture's method/path combinations. It never uses OpenAPI `servers` values or a user-provided host.
-5. An HTTP client sends to `127.0.0.1` on the running application's port. Redirects are disabled, timeout is five seconds, and a lookahead byte detects truncation beyond the 8192 captured response bytes.
+4. The sandbox runner enforces its fixture allowlist. Development environments bind the reviewed operation to an explicitly authorized numeric-loopback base URL on the server allowlist. OpenAPI `servers` and generated hostnames never select a destination.
+5. An HTTP client sends to the bound loopback target. Redirects are disabled, timeout is five seconds, and a lookahead byte detects truncation beyond the 8192 captured response bytes.
 6. The deterministic assertion engine evaluates mandatory status equality and the saved response assertions. Overall success requires every result to be PASS. The execution stores the scenario revision and request snapshot separately from the editable plan.
 7. Analysis receives a recorded result and no tools. It cannot execute another request.
 
@@ -49,7 +49,7 @@ Generated scenarios start at revision 1. The editor sends the expected revision 
 
 The service checks the revision and validates the replacement against the selected endpoint and retrieved evidence. Only a successful save replaces the plan entry and increments the edited scenario's revision. Invalid edits leave the saved plan unchanged. Edits and executions use the same service lock so concurrent edits cannot both overwrite the same revision and an edit cannot change an action during execution.
 
-The browser disables execution while the draft editor is open and resets approval after edits. Old results remain labelled with their original revision and do not count toward execution of the current revision. A conflict offers an explicit discard-and-reload action. This is optimistic concurrency protection in one process, not a durable approval record, access control or cross-request idempotency.
+The browser disables execution while the draft editor is open and resets approval after edits. Old results remain labelled with their original revision and do not count toward execution of the current revision. A conflict offers an explicit discard-and-reload action. This is optimistic concurrency protection in one process, complemented by durable approval and attempt records for execution; it is not user access control.
 
 ## Where the data lives
 
@@ -88,7 +88,7 @@ The embedded database keeps the demo setup simple and holds all records in one p
 
 This app binds to loopback and has no login or tenant isolation. Endpoint metadata filtering is not access control. Do not expose the development servers publicly. Contracts, documentation and responses are treated as untrusted text in prompts. The stronger boundary is the absence of execution tools during generation, explicit approval before execution, and application-owned target selection.
 
-The tool guard covers repeated calls within one model invocation. It does not cover duplicate user submissions, retries by clients, crashes between a network side effect and storing its result, or a second process. Durable idempotency would require a unique request key, state transitions, a persisted request hash and careful handling of uncertain network outcomes.
+The tool guard covers repeated calls within one model invocation. V3 approval/attempt tables additionally prevent a second HTTP attempt for the same approval. The attempt is committed before HTTP, and successful completion and execution evidence commit together. Interrupted and failed attempts become UNKNOWN and cannot rerun automatically. New approvals can produce new writes; target-level idempotency and multi-process execution remain outside this guarantee.
 
 Local input bounds reduce accidental resource use, but this is not a hardened multi-user ingestion service. Production requirements include strict HTTP body limits, full schema validation, authentication, encryption/access policies for documents, provider data policies, outbound network isolation, database lifecycle migrations and audited approvals.
 
@@ -99,3 +99,11 @@ Local input bounds reduce accidental resource use, but this is not a hardened mu
 Missing-case generation runs under the service lock, checks the complete expected revision list, appends cases/evidence and persists a new plan snapshot. Existing indexes and revisions remain intact. Duplicate represented probes are skipped; edited generated cases remain and receive distinct replacement candidates when necessary. The 12-case limit leaves excess gaps visible rather than discarding existing work.
 
 Conflict detection recognizes only explicit numeric strict-lower-bound statements in supporting documentation. A migration-backed decision is scoped to the detected conflict and specification. Both ordinary generation and execution enforce the decision gate; model output cannot resolve it. Interpretation does not mutate contract text or turn the conflict detector into general semantic validation. Broader schemas, multilingual prose, implicit requirements, and additional conflict forms require separate work and evaluation.
+
+## Approved development targets
+
+`DevelopmentTargets` enforces exact allowlisted HTTP numeric-loopback origins, nonprivileged ports and plain path prefixes without userinfo/query/fragment. This avoids DNS resolution and target changes through redirects. Environment records contain variable references rather than credentials. The service resolves headers before approval and before execution and fingerprints them with the saved request. Changing environment revision or resolved credentials invalidates an unused approval.
+
+`BoundedBody` cancels response consumption after a bounded capture plus one lookahead byte. A deadline also cancels slow response capture. Known credential values and sensitive response headers are sanitized before execution evidence reaches storage or the AI execution tool. The returned outcome is computed from the original bounded response, while recorded evidence is masked. This is narrow credential redaction, not a general data-loss prevention system.
+
+The default environment returns to sandbox on project reload. Pending approval IDs are kept in browser storage for safe resubmission. Approval expiry and durable attempt state are enforced on the backend, independently of UI controls. Migration V3 adds environments, approvals and attempts with cascading project/plan relationships. A connection check uses HEAD with redirects disabled; it does not establish business correctness or permission independently of the user's authorization.
