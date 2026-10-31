@@ -5,6 +5,7 @@ import { CHECK_LABELS } from './AssertionEditor.jsx';
 import EnvironmentPanel from './EnvironmentPanel.jsx';
 import RuleCoverage from './RuleCoverage.jsx';
 import ProjectHistory from './ProjectHistory.jsx';
+import BatchPanel from './BatchPanel.jsx';
 import ScenarioEditor from './ScenarioEditor.jsx';
 import { readContractFile } from './scenarioDraft.js';
 
@@ -53,6 +54,11 @@ function App() {
   }).catch(e=>setError(e.message)); }, []);
   useEffect(() => { api('/info').then(setInfo).catch(() => setError('Backend unavailable. Start Spring Boot on port 8080.')); }, []);
   useEffect(() => { setApproved(false); }, [selected, plan, editing, target]);
+  useEffect(() => {
+    const resultMap={},analysisMap={};
+    workspace?.executions.filter(e=>e.planId===plan?.id).forEach(e=>{resultMap[e.scenarioIndex]=e;analysisMap[e.scenarioIndex]=workspace.analyses[e.id];});
+    setResults(resultMap);setAnalyses(analysisMap);
+  }, [workspace, plan?.id]);
   const scenario = plan?.scenarios[selected];
   const result = results[selected];
   const analysis = analyses[selected];
@@ -88,6 +94,11 @@ function App() {
   }
   function newProject() { setWorkspace(null);setProjectName('');setName('New API');setContent('');setDocumentation('');setDeleteConfirm(false);invalidateContract();localStorage.removeItem('copilot-project');localStorage.removeItem('copilot-plan'); }
   async function refreshHistory() { if(workspace) setWorkspace(await api(`/projects/${workspace.project.id}`)); }
+  async function refreshBatchResults() {
+    if(!workspace)return;
+    const data=await api(`/projects/${workspace.project.id}`);
+    setWorkspace(current=>current?.project.id===data.project.id?data:current);
+  }
   async function task(label, action) {
     setBusy(label); setError(''); setNotice('');
     try { await action(); } catch (e) { setError(e.message); if (e.status === 409 && plan) setConflict(true); } finally { setBusy(''); }
@@ -208,7 +219,8 @@ function App() {
             </section></div>}
           <div className="evaluation-notes">{plan.evaluation.warnings.map((warning, i) => <p key={i}>ⓘ {warning}</p>)}</div>
         </>}
-        {workspace && <ProjectHistory key={workspace.project.id} workspace={workspace} busy={locked} onPlan={p=>showPlan(p)}/>}
+        {workspace && <BatchPanel key={`batch-${workspace.project.id}`} projectId={workspace.project.id} plan={plan} target={target} locked={locked} executions={workspace.executions} onResults={refreshBatchResults}/>}
+        {workspace && <ProjectHistory key={`history-${workspace.project.id}`} workspace={workspace} busy={locked} onPlan={p=>showPlan(p)}/>}
         <footer className="page-footer"><span>API Copilot <span className="footer-dot">·</span> Grounded in your contract.</span><span>Projects and execution history are saved locally.</span></footer>
       </main>
     </div>

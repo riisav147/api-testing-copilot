@@ -66,7 +66,33 @@ The UI first creates a durable approval for the exact plan/scenario revision and
 
 The browser retains the pending approval ID for an action so a network retry can reuse it. Selecting another environment clears the visible approval; it is not restored as checked after refresh. Completed executions and history display their target. No application-level automatic retry is used for writes. HTTP execution has a five-second deadline covering response capture; capture stops after 8,192 bytes plus one truncation lookahead byte.
 
-API clients now call `POST /api/approvals` with `{planId, scenarioIndex, expectedRevision, environmentId, approved:true}` (`environmentId:null` selects the sandbox), then send its `id` as `approvalId` to `/api/executions` with the same fields. Missing durable approval is rejected. `GET /api/approvals/{id}/attempt` returns NOT_STARTED, STARTED, COMPLETED or UNKNOWN and the completed execution ID when available. Saved approval/attempt records cascade with project deletion. The default workspace remains a single-process local application.
+API clients now call `POST /api/approvals` with `{planId, scenarioIndex, expectedRevision, environmentId, approved:true}` (`environmentId:null` selects the sandbox), then send its `id` as `approvalId` to `/api/executions` with the same fields. Missing durable approval is rejected. `GET /api/approvals/{id}/attempt` returns NOT_STARTED, STARTED, COMPLETED, CANCELLED or UNKNOWN and the completed execution ID when available. Saved approval/attempt records cascade with project deletion. The default workspace remains a single-process local application.
+
+## Batch execution
+
+In **Run selected tests**, choose up to 12 saved cases from the open plan. Expand each request to review its body, query, expected status and assertions. Confirm the displayed environment and approve the selection, then select **Run approved batch**. Each job saves immutable request snapshots, case revisions, its target configuration (credential references only), and separate durable approvals in one transaction.
+
+Runs are sequential by default. Parallel mode permits at most two GET/HEAD cases and requires a declaration that the cases are independent; selections containing writes stay sequential. The server has two batch workers shared across at most ten active/queued jobs, with two coordinators. Cases from one sequential batch keep selection order. Separate batches can interleave; there are no cross-batch state dependencies, fixtures or cleanup guarantees. Keep state-dependent tests sequential in one batch and avoid concurrent writes to shared fixtures.
+
+The history panel polls read-only status and shows per-case progress, saved snapshots, recorded responses and the original target revision. HTTP calls run outside the main service lock, keeping progress, cancellation and edits responsive during slow requests. Generation, analysis and other metadata mutations still use coarse synchronization and can delay execution admission. Editing a queued case or changing its environment/credentials blocks its old approval before dispatch; it never silently runs the changed request.
+
+**Cancel queued cases** prevents pending work from starting, including cases waiting for a worker. A claimed case is already considered in flight and finishes naturally; cancellation cannot roll back a request. Job states are QUEUED, RUNNING, CANCELLING, COMPLETED, CANCELLED and INTERRUPTED. COMPLETED means processing finished, not that every test passed. Case states are PENDING, RUNNING, PASSED, FAILED, BLOCKED, UNKNOWN, CANCELLED and NOT_RUN. BLOCKED indicates that preflight validation refused the request. UNKNOWN means an attempt may have reached the target without a recorded outcome; inspect the target before approving new work.
+
+On backend restart, unfinished jobs become INTERRUPTED. Recorded completed executions are recovered, started attempts without results remain UNKNOWN, and pending work becomes NOT_RUN. No job resumes or retries automatically. **Select failed cases for review** selects only actual FAILED cases of the same saved revisions, plan and environment; review and approve a new batch to rerun them. Uncertain cases are excluded. A fresh approval can repeat side effects, even for a previously failed assertion, so review the target state first.
+
+Before submitting, the browser retains a client-generated batch UUID and its approved selection. If a response is lost, **Check submission status** performs a GET; **Retry same submission** reuses the original UUID. An identical POST returns the existing job without scheduling it again. Reusing an ID for different cases, target or execution settings returns 409. Approvals expire after ten minutes, including time in the queue. There is no automatic execution retry.
+
+Migration V4 adds batch history without changing existing workspace records. Up to 200 jobs are retained until their project is deleted. Project deletion is refused while a job or single execution is active. This dispatcher is for one local backend process; it is not a distributed queue, and manual single-case execution is separate from the batch worker limit.
+
+For API clients, `POST /api/batches` accepts:
+
+```json
+{"id":"client-generated-uuid","planId":"saved-plan-uuid","environmentId":null,
+ "cases":[{"scenarioIndex":0,"expectedRevision":1},{"scenarioIndex":2,"expectedRevision":1}],
+ "parallelism":1,"independent":false,"approved":true}
+```
+
+Read the returned ID through `GET /api/batches/{id}`, list project runs through `GET /api/projects/{id}/batches`, and cancel pending work through `POST /api/batches/{id}/cancel` with `{}`. Status reads never initiate HTTP execution.
 
 ## Contract rules and missing tests
 
@@ -192,6 +218,10 @@ All JSON endpoints are under `/api`. Error responses use Spring `ProblemDetail`.
 | POST | `/api/projects/{id}/environments/{envId}/check` | HEAD reachability check |
 | POST | `/api/approvals` | Create ten-minute approval for request and target |
 | GET | `/api/approvals/{id}/attempt` | Read durable attempt outcome |
+| POST | `/api/batches` | Approve and enqueue a selected revision batch with a client UUID |
+| GET | `/api/batches/{id}` | Batch progress, case states and immutable snapshots |
+| POST | `/api/batches/{id}/cancel` | Cancel pending cases; claimed requests finish |
+| GET | `/api/projects/{id}/batches` | Saved batch history for a project |
 | POST | `/api/executions` | Execute with matching approvalId, environmentId and reviewed revision |
 | POST | `/api/executions/{id}/analysis` | Explain a recorded result |
 | GET | `/actuator/health` | Backend health |
@@ -210,7 +240,7 @@ This is a **single-user localhost application**, not an authenticated production
 
 The bundled sandbox allows GET `/products`, GET `/products/{id}` and POST `/products`. Explicitly approved development environments may execute the selected imported operation on their allowlisted local base URL. Specification `servers` URLs and generated hostnames are never used. HTTP status and configured response assertions run deterministically. Response schema validation covers only the documented subset; business-state assertions are future work.
 
-Imports, plans, revisions, executions and explanations survive restarts. Workspace caps are 200 imports, 1,000 plans and 5,000 executions; delete unused projects to free capacity. A single service lock serializes expensive operations, making capacity checks simple but limiting concurrency. Durable single-use approvals and per-approval duplicate protection are implemented. Distributed jobs, multi-process coordination and comprehensive telemetry remain future work.
+Imports, plans, revisions, executions and explanations survive restarts. Workspace caps are 200 imports, 1,000 plans and 5,000 executions; delete unused projects to free capacity. A service lock protects admission and metadata mutations; batch HTTP calls run outside it with two shared workers. Generation and analysis can still serialize unrelated admission work. Durable single-use approvals and per-approval duplicate protection are implemented. Distributed jobs, multi-process coordination and comprehensive telemetry remain future work.
 
 ## References
 

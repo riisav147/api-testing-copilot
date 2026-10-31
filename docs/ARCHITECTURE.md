@@ -4,6 +4,8 @@
 flowchart TD
     U[React: import, review, approve] --> C[API controller]
     C --> S[Copilot service: saved workspace]
+    C --> B[Batch service: durable job and bounded dispatcher]
+    B --> S
     S --> P[Bounded OpenAPI reader]
     S --> K[Knowledge interface]
     K --> D[Demo exact lookup]
@@ -47,7 +49,7 @@ flowchart TD
 
 Generated scenarios start at revision 1. The editor sends the expected revision together with a replacement query map, body and expected status. Method, path, title, category, rationale and sources are retained from the saved scenario. The generated descriptive fields remain context rather than a fresh interpretation of the user's edited request.
 
-The service checks the revision and validates the replacement against the selected endpoint and retrieved evidence. Only a successful save replaces the plan entry and increments the edited scenario's revision. Invalid edits leave the saved plan unchanged. Edits and executions use the same service lock so concurrent edits cannot both overwrite the same revision and an edit cannot change an action during execution.
+The service checks the revision and validates the replacement against the selected endpoint and retrieved evidence. Only a successful save replaces the plan entry and increments the edited scenario's revision. Invalid edits leave the saved plan unchanged. Edits and execution admission use the same short service lock, so concurrent edits cannot overwrite the same revision. Admission captures the saved plan, target and resolved headers before releasing the lock for HTTP/model work. Later edits cannot mutate that captured action; queued cases recheck their revision before admission.
 
 The browser disables execution while the draft editor is open and resets approval after edits. Old results remain labelled with their original revision and do not count toward execution of the current revision. A conflict offers an explicit discard-and-reload action. This is optimistic concurrency protection in one process, complemented by durable approval and attempt records for execution; it is not user access control.
 
@@ -66,7 +68,7 @@ The browser disables execution while the draft editor is open and resets approva
 
 Project deletion first persists a tombstone, then removes all vectors for each specification, then cascades relational deletion and clears caches. A vector cleanup failure leaves the project unavailable and retryable, including after restart. Import indexing and relational publication still span separate stores: a crash can leave orphan vectors. Successful external HTTP execution and result persistence are also not atomic; a database failure after a side effect requires investigation rather than a blind retry.
 
-The embedded database keeps the demo setup simple and holds all records in one process. It is not configured for shared service deployment. Records are retained until project deletion; bounded workspace caches remain, while plan revision snapshots can grow until deletion. Production work includes pagination, finer retention controls, backups, schema upgrade policies, and durable job/idempotency states.
+The embedded database keeps the demo setup simple and holds all records in one process. It is not configured for shared service deployment. Records are retained until project deletion; bounded workspace caches remain, while plan revision snapshots can grow until deletion. Production work includes pagination, finer retention controls, backups and schema upgrade policies.
 
 ## Important tradeoffs
 
@@ -80,7 +82,7 @@ The embedded database keeps the demo setup simple and holds all records in one p
 
 **Prompt-based typed conversion:** Spring AI generates formatting instructions and converts output to a record. Provider-native strict JSON Schema is not enabled. Malformed or domain-invalid output fails closed; automatic repair is not attempted.
 
-**Coarse service synchronization:** capacity checks and writes are simple and deterministic, but slow provider calls serialize unrelated requests. A production design should use durable jobs, bounded queues, cancellation, per-resource locking and quotas.
+**Bounded batch dispatch with short execution admission:** a service lock protects capacity, revision checks and durable attempt creation. HTTP/model execution runs outside it against captured values. Two batch workers share work from two coordinators and a bounded eight-job waiting queue. Generation, analysis and other metadata mutations still hold coarse locks across provider work; finer resource locking and shared deployment need separate design.
 
 **Deterministic assertions:** `AssertionEngine` evaluates typed header/JSON checks after bounded response capture. JSON Pointer selects fields without running expressions or scripts. Missing fields, wrong values and wrong types fail; invalid/empty/truncated JSON and unsupported schema rules are unevaluable. Header and status checks remain available independently. An overall result passes only when every configured check passes. The schema checker first scans the complete schema definition for unsupported keywords, so unsupported rules in absent optional properties cannot silently pass. Business state and side effects remain outside these checks.
 
@@ -107,3 +109,15 @@ Conflict detection recognizes only explicit numeric strict-lower-bound statement
 `BoundedBody` cancels response consumption after a bounded capture plus one lookahead byte. A deadline also cancels slow response capture. Known credential values and sensitive response headers are sanitized before execution evidence reaches storage or the AI execution tool. The returned outcome is computed from the original bounded response, while recorded evidence is masked. This is narrow credential redaction, not a general data-loss prevention system.
 
 The default environment returns to sandbox on project reload. Pending approval IDs are kept in browser storage for safe resubmission. Approval expiry and durable attempt state are enforced on the backend, independently of UI controls. Migration V3 adds environments, approvals and attempts with cascading project/plan relationships. A connection check uses HEAD with redirects disabled; it does not establish business correctness or permission independently of the user's authorization.
+
+## Batch lifecycle and recovery
+
+`BatchService` validates a selected plan and delegates approval creation to `CopilotService`. `WorkspaceStore.createBatch` atomically inserts the job and every case approval. The job stores request/assertion snapshots, revision indexes and an environment snapshot containing only variable references. A client UUID is the submission identity: repeated identical submissions return stored state and do not enqueue another run.
+
+Each coordinator submits at most the job's configured parallelism (one or two) to two shared workers. This bounds outstanding worker tasks to four even though the executor's internal queue is unbounded. Only declared independent GET/HEAD cases can use parallelism two. Workers claim cases under the batch lock immediately before admission; merely waiting in the worker queue leaves a case cancellable. A case then uses the same exact-revision, target-fingerprint and durable-attempt path as single execution. Results commit before the batch case is marked complete. Failing assertions do not abort remaining cases; transport uncertainty is recorded without retry.
+
+Cancellation marks pending cases CANCELLED and consumes their approvals, while claimed work finishes. The state transition and worker claim share the same batch lock. Job status and cancellation do not acquire the service lock. Project deletion checks both active jobs and captured in-flight single executions before cascading data deletion. Deletion is refused until those runs finish or are cancelled.
+
+At startup, active jobs become INTERRUPTED. For RUNNING cases, a completed durable attempt recovers the original execution; an uncertain attempt becomes UNKNOWN; a case with no attempt becomes NOT_RUN. Pending cases become NOT_RUN and their unused approvals are cancelled. This handles crashes between attempt/result persistence and batch-status updates without reissuing writes. A process restart cannot safely determine whether an unrecorded external side effect happened, so no background job resumes automatically.
+
+The process accepts ten active/queued jobs and retains at most 200 jobs. Rejected dispatcher submission is persisted as INTERRUPTED/NOT_RUN rather than stranded QUEUED. Schema V4 adds the batch table with cascading project/plan foreign keys. There is no distributed lease, automatic retry, target rollback, ordering between different batches or stateful dependency orchestration. Browser polling performs GET only; failed-case preparation requires an explicit new review and approval.
