@@ -9,7 +9,8 @@ import static dev.rishav.copilot.Models.*;
 @RequestMapping("/api")
 public class ApiController {
     private final CopilotService service;
-    public ApiController(CopilotService service) { this.service=service; }
+    private final BatchService batches;
+    public ApiController(CopilotService service,BatchService batches) { this.service=service;this.batches=batches; }
     @GetMapping("/info") public Map<String,Object> info() {
         return Map.of("mode",service.mode(),"executionTarget","bundled sandbox or explicitly approved allowlisted local development API","storage","persistent workspace database; AI vectors persist in pgvector");
     }
@@ -33,6 +34,10 @@ public class ApiController {
     @PostMapping("/projects/{id}/environments/{envId}/check") public Map<String,Object> connection(@PathVariable UUID id,@PathVariable UUID envId) { return service.checkConnection(id,envId); }
     @PostMapping("/approvals") public Approval approval(@Valid @RequestBody ApprovalRequest r) { return service.approve(r); }
     @GetMapping("/approvals/{id}/attempt") public Attempt attempt(@PathVariable UUID id) { return service.attempt(id); }
+    @PostMapping("/batches") public BatchJob batch(@Valid @RequestBody BatchRequest r) { return batches.submit(r); }
+    @GetMapping("/batches/{id}") public BatchJob batch(@PathVariable UUID id) { return batches.get(id); }
+    @PostMapping("/batches/{id}/cancel") public BatchJob cancel(@PathVariable UUID id) { return batches.cancel(id); }
+    @GetMapping("/projects/{id}/batches") public List<BatchJob> batches(@PathVariable UUID id) { return batches.list(id); }
     @PostMapping("/executions") public Execution execute(@Valid @RequestBody ExecuteRequest request) { return service.execute(request); }
     @PostMapping("/executions/{id}/analysis") public Analysis analyse(@PathVariable UUID id) { return service.analyse(id); }
 }

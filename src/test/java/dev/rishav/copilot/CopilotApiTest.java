@@ -219,4 +219,26 @@ class CopilotApiTest {
         assertThat(post("/api/plans",Map.of("specificationId",id,"endpointKey","POST /products")).statusCode()).isEqualTo(409);
     }
 
+    @Test void batchesValidateInputAndReturnMixedDurableSandboxResults() throws Exception {
+        var plan=createPlan();var id=UUID.randomUUID();
+        var payload=new LinkedHashMap<String,Object>();
+        payload.put("id",id);payload.put("planId",plan.path("id").asText());payload.put("parallelism",1);payload.put("independent",false);
+        payload.put("cases",List.of(Map.of("scenarioIndex",0,"expectedRevision",1),Map.of("scenarioIndex",1,"expectedRevision",1),Map.of("scenarioIndex",2,"expectedRevision",1)));
+        payload.put("approved",false);assertThat(post("/api/batches",payload).statusCode()).isEqualTo(400);
+        payload.put("approved",true);payload.put("parallelism",3);assertThat(post("/api/batches",payload).statusCode()).isEqualTo(400);payload.put("parallelism",1);
+        payload.put("cases",Collections.singletonList(null));assertThat(post("/api/batches",payload).statusCode()).isEqualTo(400);
+        payload.put("cases",List.of(Map.of("scenarioIndex",0,"expectedRevision",1),Map.of("scenarioIndex",1,"expectedRevision",1),Map.of("scenarioIndex",2,"expectedRevision",1)));
+        var submitted=post("/api/batches",payload);assertThat(submitted.statusCode()).isEqualTo(200);
+        JsonNode job=null;long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        do {
+            var response=client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+port+"/api/batches/"+id)).GET().build(),HttpResponse.BodyHandlers.ofString());
+            assertThat(response.statusCode()).isEqualTo(200);job=mapper.readTree(response.body());
+            if(job.path("state").asText().equals("COMPLETED"))break;Thread.sleep(10);
+        }while(System.nanoTime()<deadline);
+        assertThat(job.path("state").asText()).isEqualTo("COMPLETED");
+        assertThat(job.path("cases").findValuesAsText("state")).containsExactly("PASSED","PASSED","FAILED");
+        assertThat(mapper.readTree(post("/api/batches",payload).body())).isEqualTo(job);
+        assertThat(mapper.readTree(post("/api/batches/"+id+"/cancel",Map.of()).body())).isEqualTo(job);
+    }
+
 }

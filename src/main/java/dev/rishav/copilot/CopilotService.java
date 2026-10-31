@@ -9,6 +9,7 @@ import static dev.rishav.copilot.Models.*;
 
 @Service
 public class CopilotService {
+    private final Map<UUID,UUID> inFlight=new HashMap<>();
     private DevelopmentTargets targets;
     @org.springframework.beans.factory.annotation.Autowired
     void targets(DevelopmentTargets targets) { this.targets=targets; }
@@ -117,17 +118,32 @@ public class CopilotService {
         try {var mapper=new com.fasterxml.jackson.databind.ObjectMapper();return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(mapper.writeValueAsBytes(List.of(p.scenarios().get(index),new TreeMap<>(headers)))));}
         catch(Exception e) { throw new IllegalStateException("Could not fingerprint request"); }
     }
-    public synchronized Approval approve(ApprovalRequest r) {
+    public synchronized Approval approve(ApprovalRequest r) { var a=buildApproval(r);store.saveApproval(a);return a; }
+    private Approval buildApproval(ApprovalRequest r) {
         if(!r.approved())throw ApiException.badRequest("Explicit approval is required");
         var p=plan(r.planId());checkRevision(p,r.scenarioIndex(),r.expectedRevision());
         var spec=saved.get(p.specificationId());requireResolved(spec,endpoint(p));
         var e=r.environmentId()==null?null:environment(spec.projectId(),r.environmentId());
         if(e!=null)targets.headers(e);
         var approval=new Approval(UUID.randomUUID(),p.id(),r.scenarioIndex(),r.expectedRevision(),r.environmentId(),requestHash(p,r.scenarioIndex(),e==null?Map.of():targets.headers(e)),e==null?0:e.revision(),Instant.now().plusSeconds(600),e==null?"bundled localhost sandbox":e.baseUrl());
-        store.saveApproval(approval);return approval;
+        return approval;
     }
     public synchronized Attempt attempt(UUID id) { if(store.approval(id)==null)throw ApiException.badRequest("Unknown approval");var a=store.attempt(id);return a==null?new Attempt("NOT_STARTED",null):a; }
-    public synchronized Execution execute(ExecuteRequest request) {
+    private record Prepared(Plan plan,ExecuteRequest request,TargetEnvironment environment,Map<String,String> headers,Approval approval) {}
+    public Execution execute(ExecuteRequest request) {
+        Object prepared=prepareExecution(request);
+        if(prepared instanceof Execution result)return result;
+        var p=(Prepared)prepared;
+        try {
+            var execution=workflow.executeApproved(()->p.environment()==null?runner.execute(p.plan(),request.scenarioIndex()):targets.redact(runner.executeAt(p.plan(),request.scenarioIndex(),p.environment(),p.headers()),p.environment()));
+            synchronized(this) { store.completeAttempt(p.approval().id(),execution);executions.put(execution.id(),execution); }
+            return execution;
+        } catch(RuntimeException failure) {
+            synchronized(this) { store.uncertain(p.approval().id()); }
+            throw new ApiException(HttpStatus.BAD_GATEWAY,"Execution outcome is uncertain. No automatic retry was made. Inspect the target and check this approval's attempt state.");
+        } finally { synchronized(this) { inFlight.remove(p.approval().id()); } }
+    }
+    private synchronized Object prepareExecution(ExecuteRequest request) {
         if(!request.approved())throw ApiException.badRequest("Explicit review and approval is required");
         var p=plan(request.planId());checkRevision(p,request.scenarioIndex(),request.expectedRevision());
         var spec=saved.get(p.specificationId());requireResolved(spec,endpoint(p));
@@ -138,19 +154,30 @@ public class CopilotService {
         var previous=store.attempt(a.id());
         if(previous!=null) {
             if(previous.state().equals("COMPLETED"))return store.execution(previous.executionId());
+            if(previous.state().equals("CANCELLED"))throw new ApiException(HttpStatus.CONFLICT,"This approval was cancelled before execution");
             throw new ApiException(HttpStatus.CONFLICT,"Execution outcome is uncertain. This approval will not run again. Inspect the target before approving a new run.");
         }
         var e=request.environmentId()==null?null:environment(spec.projectId(),request.environmentId());
         if(!a.expiresAt().isAfter(Instant.now())||(e!=null&&e.revision()!=a.environmentRevision()))throw new ApiException(HttpStatus.CONFLICT,"Approval expired or the environment changed. Review and approve again.");
         var headers=e==null?Map.<String,String>of():targets.headers(e);
         if(!a.requestHash().equals(requestHash(p,request.scenarioIndex(),headers)))throw new ApiException(HttpStatus.CONFLICT,"Request or credential configuration changed. Approve again.");
-        capacity(executions,5000);store.startAttempt(a.id());
-        try {
-            var execution=workflow.executeApproved(()->e==null?runner.execute(p,request.scenarioIndex()):targets.redact(runner.executeAt(p,request.scenarioIndex(),e,headers),e));
-            store.completeAttempt(a.id(),execution);executions.put(execution.id(),execution);return execution;
-        } catch(RuntimeException failure) {
-            store.uncertain(a.id());throw new ApiException(HttpStatus.BAD_GATEWAY,"Execution outcome is uncertain. No automatic retry was made. Inspect the target and check this approval's attempt state.");
+        if(executions.size()+inFlight.size()>=5000)throw new ApiException(HttpStatus.TOO_MANY_REQUESTS,"Workspace execution capacity reached");
+        store.startAttempt(a.id());inFlight.put(a.id(),spec.projectId());return new Prepared(p,request,e,headers,a);
+    }
+    public synchronized BatchJob createBatch(BatchRequest r) {
+        if(!r.approved())throw ApiException.badRequest("Review and approve the selected batch first");
+        var p=plan(r.planId());var spec=saved.get(p.specificationId());
+        var seen=new HashSet<Integer>();var cases=new ArrayList<BatchCase>();var approvals=new ArrayList<Approval>();
+        for(var selected:r.cases()) {
+            if(!seen.add(selected.scenarioIndex()))throw ApiException.badRequest("Select each scenario once");
+            checkRevision(p,selected.scenarioIndex(),selected.expectedRevision());
+            var scenario=p.scenarios().get(selected.scenarioIndex());
+            if(r.parallelism()>1 && (!r.independent()||!Set.of("GET","HEAD").contains(scenario.method())))throw ApiException.badRequest("Parallel execution requires declared independent GET/HEAD cases. Writes run sequentially.");
+            var a=buildApproval(new ApprovalRequest(p.id(),selected.scenarioIndex(),selected.expectedRevision(),r.environmentId(),true));approvals.add(a);
+            cases.add(new BatchCase(selected.scenarioIndex(),selected.expectedRevision(),a.id(),scenario,"PENDING",null,"Awaiting execution"));
         }
+        var now=Instant.now();var job=new BatchJob(r.id(),spec.projectId(),p.id(),r.environmentId(),approvals.getFirst().target(),r.environmentId()==null?null:environment(spec.projectId(),r.environmentId()),r.parallelism(),r.independent(),List.copyOf(cases),"QUEUED",false,now,now);
+        store.createBatch(job,approvals);return job;
     }
     public synchronized Analysis analyse(UUID id) {
         var execution=required(executions,id); plan(execution.planId());
@@ -179,6 +206,7 @@ public class CopilotService {
     }
     public synchronized void deleteProject(UUID id) {
         var project=required(projects,id);
+        if(inFlight.containsValue(id)||store.records("batches",BatchJob.class).stream().anyMatch(b->b.projectId().equals(id)&&Set.of("QUEUED","RUNNING","CANCELLING").contains(b.state())))throw new ApiException(HttpStatus.CONFLICT,"Finish or cancel active executions before deleting this project");
         store.markDeleting(id); projects.put(id,new Project(id,project.name(),project.createdAt(),true));
         var specs=saved.values().stream().filter(s -> s.projectId().equals(id)).map(s -> s.specification().id()).toList();
         // A durable tombstone keeps a partially cleaned project unavailable until deletion is retried.

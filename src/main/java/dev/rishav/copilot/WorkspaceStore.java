@@ -27,7 +27,7 @@ public class WorkspaceStore implements AutoCloseable {
         this.mapper=mapper; ds.setJdbcUrl(url); ds.setUsername(user); ds.setPassword(password); ds.setMaximumPoolSize(2);
         db=new JdbcTemplate(ds); tx=new TransactionTemplate(new DataSourceTransactionManager(ds));
         db.execute("CREATE TABLE IF NOT EXISTS workspace_migrations (version INTEGER PRIMARY KEY)");
-        for(int version=1;version<=3;version++) {
+        for(int version=1;version<=4;version++) {
             if(db.queryForObject("SELECT COUNT(*) FROM workspace_migrations WHERE version=?",Integer.class,version)!=0)continue;
             var sql=new ClassPathResource("db/workspace/V"+version+".sql").getContentAsString(StandardCharsets.UTF_8);
             for(String statement:sql.split(";")) if(!statement.isBlank()) db.execute(statement);
@@ -72,6 +72,15 @@ public class WorkspaceStore implements AutoCloseable {
     public void completeAttempt(UUID id,Execution e) { tx.executeWithoutResult(s->{saveExecution(e); db.update("UPDATE execution_attempts SET state='COMPLETED',execution_id=? WHERE approval_id=?",e.id().toString(),id.toString());}); }
     public Execution execution(UUID id) { return db.queryForObject("SELECT payload FROM executions WHERE id=?",(r,i)->decode(r.getString(1),Execution.class),id.toString()); }
     public void recoverAttempts() { db.update("UPDATE execution_attempts SET state='UNKNOWN' WHERE state='STARTED'"); }
+    public BatchJob batch(UUID id) { var rows=db.query("SELECT payload FROM batches WHERE id=?",(r,i)->decode(r.getString(1),BatchJob.class),id.toString());return rows.isEmpty()?null:rows.getFirst(); }
+    public void saveBatch(BatchJob job) { db.update("UPDATE batches SET payload=? WHERE id=?",json(job),job.id().toString()); }
+    public void createBatch(BatchJob job,List<Approval> approvals) { tx.executeWithoutResult(s->{
+        approvals.forEach(this::saveApproval);
+        db.update("INSERT INTO batches(id,project_id,plan_id,payload) VALUES(?,?,?,?)",job.id().toString(),job.projectId().toString(),job.planId().toString(),json(job));
+    }); }
+    public void cancelApproval(UUID id) {
+        db.update("INSERT INTO execution_attempts(approval_id,state) SELECT ?,'CANCELLED' WHERE NOT EXISTS(SELECT 1 FROM execution_attempts WHERE approval_id=?)",id.toString(),id.toString());
+    }
     public void rename(UUID id,String name) { db.update("UPDATE projects SET name=? WHERE id=?",name,id.toString()); }
     public void markDeleting(UUID id) { db.update("UPDATE projects SET deleting=TRUE WHERE id=?",id.toString()); }
     public void delete(UUID id) { db.update("DELETE FROM projects WHERE id=?",id.toString()); }
