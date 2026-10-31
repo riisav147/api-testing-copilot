@@ -27,10 +27,11 @@ public class WorkspaceStore implements AutoCloseable {
         this.mapper=mapper; ds.setJdbcUrl(url); ds.setUsername(user); ds.setPassword(password); ds.setMaximumPoolSize(2);
         db=new JdbcTemplate(ds); tx=new TransactionTemplate(new DataSourceTransactionManager(ds));
         db.execute("CREATE TABLE IF NOT EXISTS workspace_migrations (version INTEGER PRIMARY KEY)");
-        if(db.queryForObject("SELECT COUNT(*) FROM workspace_migrations WHERE version=1",Integer.class)==0) {
-            var sql=new ClassPathResource("db/workspace/V1.sql").getContentAsString(StandardCharsets.UTF_8);
+        for(int version=1;version<=2;version++) {
+            if(db.queryForObject("SELECT COUNT(*) FROM workspace_migrations WHERE version=?",Integer.class,version)!=0)continue;
+            var sql=new ClassPathResource("db/workspace/V"+version+".sql").getContentAsString(StandardCharsets.UTF_8);
             for(String statement:sql.split(";")) if(!statement.isBlank()) db.execute(statement);
-            db.update("INSERT INTO workspace_migrations(version) VALUES(1)");
+            db.update("INSERT INTO workspace_migrations(version) VALUES(?)",version);
         }
     }
     private String json(Object o) { try { return mapper.writeValueAsString(o); } catch(Exception e) { throw new IllegalStateException("Could not serialize workspace record",e); } }
@@ -54,6 +55,11 @@ public class WorkspaceStore implements AutoCloseable {
     }
     public void saveExecution(Execution e) { db.update("INSERT INTO executions(id,plan_id,payload) VALUES(?,?,?)",e.id().toString(),e.planId().toString(),json(e)); }
     public void saveAnalysis(UUID id,Analysis a) { tx.executeWithoutResult(s->{db.update("DELETE FROM analyses WHERE execution_id=?",id.toString());db.update("INSERT INTO analyses(execution_id,payload) VALUES(?,?)",id.toString(),json(a));}); }
+    public List<ConflictDecision> decisions() { return records("conflict_decisions",ConflictDecision.class); }
+    public void saveDecision(UUID specId,ConflictDecision decision) {
+        tx.executeWithoutResult(s->{db.update("DELETE FROM conflict_decisions WHERE id=?",decision.conflictId());
+            db.update("INSERT INTO conflict_decisions(id,specification_id,payload) VALUES(?,?,?)",decision.conflictId(),specId.toString(),json(decision));});
+    }
     public void rename(UUID id,String name) { db.update("UPDATE projects SET name=? WHERE id=?",name,id.toString()); }
     public void markDeleting(UUID id) { db.update("UPDATE projects SET deleting=TRUE WHERE id=?",id.toString()); }
     public void delete(UUID id) { db.update("DELETE FROM projects WHERE id=?",id.toString()); }

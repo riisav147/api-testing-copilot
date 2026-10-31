@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 import { CHECK_LABELS } from './AssertionEditor.jsx';
+import RuleCoverage from './RuleCoverage.jsx';
 import ProjectHistory from './ProjectHistory.jsx';
 import ScenarioEditor from './ScenarioEditor.jsx';
 import { readContractFile } from './scenarioDraft.js';
@@ -85,7 +86,7 @@ function App() {
   async function refreshHistory() { if(workspace) setWorkspace(await api(`/projects/${workspace.project.id}`)); }
   async function task(label, action) {
     setBusy(label); setError(''); setNotice('');
-    try { await action(); } catch (e) { setError(e.message); if (e.status === 409) setConflict(true); } finally { setBusy(''); }
+    try { await action(); } catch (e) { setError(e.message); if (e.status === 409 && plan) setConflict(true); } finally { setBusy(''); }
   }
   function invalidateContract() { setSpec(null); setPlan(null); setResults({}); setAnalyses({}); setConflict(false); setNotice(''); }
   async function importFile(files) {
@@ -103,7 +104,7 @@ function App() {
       const updated = await api(`/plans/${plan.id}/scenarios/${selected}`, changes, 'PUT');
       await refreshHistory(); setPlan(updated); setEditing(false); setApproved(false); setConflict(false);
       setNotice('Changes saved. Review this revision and approve it before running. Earlier results retain their original requests.');
-    } catch (e) { if (e.status === 409) setConflict(true); throw e; }
+    } catch (e) { if (e.status === 409 && plan) setConflict(true); throw e; }
     finally { setBusy(''); }
   }
   async function reloadPlan() {
@@ -180,6 +181,7 @@ function App() {
         </section>
         <div className="section-heading workbench-heading"><div><h2>Scenario workbench</h2><p>{plan ? `${plan.scenarios.length} scenarios grounded in ${plan.evidence.length} evidence chunks.` : 'Select an operation to explore its test coverage.'}</p></div>{plan && <button className="button subtle" onClick={downloadPlan}>↓ Export JSON</button>}</div>
         <div className="operation-bar"><div><span className="operation-label">OPERATION</span><select aria-label="API operation" value={operation} disabled={!spec || locked} onChange={e => { setOperation(e.target.value); setPlan(null); setResults({}); setAnalyses({}); }}>{!spec && <option value="">Import a contract first</option>}{spec?.endpoints.map(e => <option key={e.key}>{e.key}</option>)}</select></div><button className="button primary" disabled={!spec || locked} onClick={generate}>{busy === 'Generating scenarios' ? 'Generating…' : '✦ Generate scenarios'}</button></div>
+        <RuleCoverage spec={spec} operation={operation} plan={plan} runKey={Object.values(results).map(r=>r.id).join(',')} locked={locked} onPlan={async updated=>{setPlan(updated);setApproved(false);await refreshHistory();}} onSelect={index=>{setSelected(index);setView('scenarios');}}/>
         {!plan ? <section className="panel empty"><div className="empty-symbol">⌁</div><h3>Your next bug is hiding in an edge case.</h3><p>Load the sample, import its contract, then generate scenarios<br/>for <code>POST /products</code> to find the boundary mismatch.</p><div className="category-legend"><span>● Positive</span><span>● Negative</span><span>● Edge cases</span></div></section> : <>
           <div className="metrics"><div><small>SCENARIOS</small><strong>{plan.evaluation.total}<span>ready to review</span></strong></div><div><small title="How many of positive, negative and edge categories are present. This is not code coverage.">CATEGORY COVERAGE</small><strong>{Math.round(plan.evaluation.categoryCoverage * 100)}%<span>of 3 categories</span></strong></div><div><small title="Citations identify the source context; they do not prove that a test is correct.">SOURCE CITATIONS</small><strong>{Math.round(plan.evaluation.sourceCitationCoverage * 100)}%<span>provenance, not correctness</span></strong></div><div><small>EXECUTED</small><strong>{Object.entries(results).filter(([index, value]) => value.scenarioRevision === plan.scenarioRevisions[index]).length}<span>of {plan.scenarios.length} current revisions</span></strong></div></div>
           <div className="tabs" role="tablist" aria-label="Plan view"><button disabled={locked} role="tab" aria-selected={view === 'scenarios'} onClick={() => setView('scenarios')}>Scenarios <span>{plan.scenarios.length}</span></button><button disabled={locked} role="tab" aria-selected={view === 'evidence'} onClick={() => setView('evidence')}>Retrieved evidence <span>{plan.evidence.length}</span></button></div>

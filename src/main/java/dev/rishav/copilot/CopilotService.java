@@ -9,6 +9,8 @@ import static dev.rishav.copilot.Models.*;
 
 @Service
 public class CopilotService {
+    private final ContractCoverage coverage=new ContractCoverage();
+    private final Map<String,ConflictDecision> decisions=new ConcurrentHashMap<>();
     private final WorkspaceStore store;
     private final Map<UUID,Project> projects=new ConcurrentHashMap<>();
     private final Map<UUID,SavedSpecification> saved=new ConcurrentHashMap<>();
@@ -35,7 +37,7 @@ public class CopilotService {
         });
         store.records("plans",Plan.class).forEach(p -> plans.put(p.id(),p));
         store.records("executions",Execution.class).forEach(e -> executions.put(e.id(),e));
-        analyses.putAll(store.analyses());
+        analyses.putAll(store.analyses()); store.decisions().forEach(d -> decisions.put(d.conflictId(),d));
     }
     public String mode() { return generator.mode(); }
     public synchronized Specification importSpecification(ImportRequest request) {
@@ -58,6 +60,7 @@ public class CopilotService {
         var endpoint=spec.endpoints().stream().filter(e -> e.key().equals(request.endpointKey())).findFirst()
                 .orElseThrow(() -> ApiException.badRequest("Unknown operation for this specification"));
         activeProject(saved.get(spec.id()).projectId());
+        requireResolved(saved.get(spec.id()),endpoint);
         var evidence=knowledge.retrieve(spec.id(),endpoint);
         if (evidence.isEmpty()) throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,"No endpoint evidence retrieved; generation is refused");
         Draft draft=generator.generate(endpoint,evidence);
@@ -88,6 +91,7 @@ public class CopilotService {
         if (!request.approved()) throw ApiException.badRequest("Explicit review and approval is required");
         var plan=plan(request.planId());
         checkRevision(plan,request.scenarioIndex(),request.expectedRevision());
+        var spec=saved.get(plan.specificationId()); requireResolved(spec,endpoint(plan));
         capacity(executions,5000);
         var execution=workflow.executeApproved(() -> runner.execute(plan,request.scenarioIndex()));
         store.saveExecution(execution); executions.put(execution.id(),execution); return execution;
@@ -126,7 +130,67 @@ public class CopilotService {
         store.delete(id);
         var planIds=plans.values().stream().filter(p -> specs.contains(p.specificationId())).map(Plan::id).toList();
         executions.values().stream().filter(e -> planIds.contains(e.planId())).map(Execution::id).toList().forEach(e -> { executions.remove(e); analyses.remove(e); });
+        decisions.keySet().removeIf(key -> specs.stream().anyMatch(specId -> key.startsWith(specId.toString()+":")));
         planIds.forEach(plans::remove); specs.forEach(s -> { specifications.remove(s); saved.remove(s); }); projects.remove(id);
+    }
+    private Endpoint endpoint(Plan p) { return specifications.get(p.specificationId()).endpoints().stream().filter(e -> e.key().equals(p.endpointKey())).findFirst().orElseThrow(); }
+    private List<ContractCoverage.Rule> rules(SavedSpecification spec,Endpoint endpoint) {
+        var evidence=List.of(new Evidence("contract:"+spec.specification().id()+":"+endpoint.key(),"CONTRACT "+endpoint.key()+"\n"+endpoint.contract(),1));
+        return coverage.rules(spec,endpoint,evidence);
+    }
+    private void requireResolved(SavedSpecification spec,Endpoint endpoint) {
+        var conflicts=coverage.conflicts(spec,rules(spec,endpoint),decisions);
+        if(conflicts.stream().anyMatch(c -> !c.decision().equals("USE_CONTRACT")))
+            throw new ApiException(HttpStatus.CONFLICT,"Review conflicting numeric documentation in the rule coverage panel before generating or executing. Revise the contract as a new version if it should change.");
+    }
+    public synchronized ContractCoverage.Report coverage(UUID specificationId,String endpointKey,UUID planId) {
+        var spec=required(saved,specificationId); activeProject(spec.projectId());
+        var endpoint=spec.specification().endpoints().stream().filter(e->e.key().equals(endpointKey)).findFirst().orElseThrow(()->ApiException.badRequest("Unknown operation"));
+        var rules=rules(spec,endpoint); Plan plan=planId==null?null:plan(planId);
+        if(plan!=null && (!plan.specificationId().equals(specificationId)||!plan.endpointKey().equals(endpointKey)))throw ApiException.badRequest("Plan does not belong to this specification and operation");
+        var rows=new ArrayList<ContractCoverage.Row>();
+        for(var rule:rules) {
+            var indexes=new ArrayList<Integer>();String state="MISSING";
+            if(plan!=null) for(int i=0;i<plan.scenarios().size();i++) if(coverage.matches(rule,plan.scenarios().get(i)))indexes.add(i);
+            if(!indexes.isEmpty()) {
+                state="GENERATED";var results=new ArrayList<Execution>();
+                for(int index:indexes) { final Plan current=plan;
+                    executions.values().stream().filter(e->e.planId().equals(current.id())&&e.scenarioIndex()==index&&e.scenarioRevision()==current.scenarioRevisions().get(index))
+                        .max(Comparator.comparing(Execution::createdAt)).ifPresent(results::add);
+                }
+                if(!results.isEmpty())state=results.stream().allMatch(Execution::passed)?"PASSED":"FAILED";
+            }
+            rows.add(new ContractCoverage.Row(rule,state,List.copyOf(indexes)));
+        }
+        return new ContractCoverage.Report(specificationId,spec.version(),endpointKey,rows,coverage.conflicts(spec,rules,decisions),
+                "First 64 supported top-level JSON request rule probes only. Coverage records input probes and configured assertions, not code coverage or proof that the whole contract is correct. Numeric conflicts recognize field > number only.");
+    }
+    public synchronized ContractCoverage.Report resolve(UUID specId,String endpointKey,ConflictDecision decision) {
+        var report=coverage(specId,endpointKey,null);
+        if(report.conflicts().stream().noneMatch(c -> c.id().equals(decision.conflictId()))) throw ApiException.badRequest("Unknown conflict for this specification and operation");
+        store.saveDecision(specId,decision); decisions.put(decision.conflictId(),decision); return coverage(specId,endpointKey,null);
+    }
+    public synchronized Plan fillMissing(UUID id,FillMissingRequest request) {
+        var plan=plan(id);
+        if(!plan.scenarioRevisions().equals(request.expectedRevisions()))throw new ApiException(HttpStatus.CONFLICT,"Plan changed. Reload before generating missing tests.");
+        var spec=saved.get(plan.specificationId());var endpoint=endpoint(plan);requireResolved(spec,endpoint);
+        var rules=rules(spec,endpoint);var cases=new ArrayList<>(plan.scenarios());var revisions=new ArrayList<>(plan.scenarioRevisions());var evidence=new ArrayList<>(plan.evidence());
+        for(var rule:rules) {
+            if(cases.size()>=12)break;
+            if(cases.stream().anyMatch(c->coverage.matches(rule,c)))continue;
+            var c=rule.candidate();
+            String title=c.title();int suffix=2;
+            var titles=cases.stream().map(Scenario::title).collect(java.util.stream.Collectors.toSet());
+            while(titles.contains(title)) title=c.title()+" ("+(suffix++)+")";
+            c=new Scenario(title,c.category(),c.method(),c.path(),c.query(),c.body(),c.expectedStatus(),c.rationale(),c.sourceIds(),c.assertions());
+            final String sourceId=c.sourceIds().getFirst();
+            if(evidence.stream().noneMatch(e->e.id().equals(sourceId))) evidence.add(new Evidence(c.sourceIds().getFirst(),"CONTRACT "+endpoint.key()+"\n"+endpoint.contract(),1));
+            cases.add(c);revisions.add(1);
+        }
+        if(cases.size()==plan.scenarios().size())return plan;
+        validator.validate(new Draft(cases),endpoint,evidence);
+        var updated=new Plan(plan.id(),plan.specificationId(),plan.endpointKey(),plan.mode(),List.copyOf(cases),List.copyOf(revisions),List.copyOf(evidence),evaluator.evaluate(cases),plan.createdAt());
+        store.savePlan(updated,false);plans.put(id,updated);return updated;
     }
     private void checkRevision(Plan plan, int index, Integer expectedRevision) {
         if (index<0 || index>=plan.scenarios().size()) throw ApiException.badRequest("Scenario index out of range");

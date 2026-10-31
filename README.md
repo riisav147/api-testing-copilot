@@ -46,6 +46,20 @@ Project data is retained until explicitly deleted. The UI asks you to confirm de
 
 Workspace JDBC settings are `copilot.storage-url`, `copilot.storage-user` and `copilot.storage-password`, separate from the AI vector database settings. The verified default is embedded H2. Keep `.tools/` private: it contains imported documents and response snapshots. Switching between demo and AI keeps saved records, but imports indexed only in demo must be reimported as a new version to create AI vectors. AI imports are not automatically re-embedded at startup.
 
+## Contract rules and missing tests
+
+The **Contract rules and missing tests** panel links supported request probes to the exact specification version and JSON Pointer in the original contract. Local references link to their component definitions. Expand **View exact contract rule** to see the source value highlighted; **Review case** selects a matching saved scenario. This works for existing saved plans as well as new ones.
+
+Supported probes cover required top-level JSON body fields, inclusive numeric minimum/maximum and one unit outside those bounds, bounded string minLength/maxLength and one character outside, and enum examples (first valid value and an excluded string when applicable). Numeric fields with exclusive bounds/multipleOf or fractional integer bounds, strings with pattern/format, nested request rules and other schema constructs are outside this first coverage map. Negative cases require an explicitly documented HTTP 400; successful probes require a documented 2xx. Enumeration and length probes are bounded; length limits above 1,000 are omitted. Reports contain at most 64 probes.
+
+States are **MISSING**, **GENERATED**, **PASSED** and **FAILED**. Matching uses the saved input probe and expected status, not a model-supplied coverage label. Results count only when their scenario revision matches the current saved case. For matching cases with executions, the latest run per case determines pass/fail; any nonpassing result makes the row failed. A passing row means its configured assertions passed, not that the source rule or all business behavior has been proved correct. Unsupported rules are outside the denominator; this is separate from category coverage and code coverage.
+
+**Generate missing tests** appends deterministic reviewable cases to the same plan without replacing edits, assertions or existing revisions. The endpoint requires the complete current revision list. Repeated calls avoid duplicate represented probes; when a previously generated case is edited away from a probe, a newly named case can fill the gap while preserving the edit. Plans still hold at most 12 cases; remaining gaps stay visible. Fixture assumptions and unrelated constraints still require review, particularly for unfamiliar APIs. Generation does not execute the added requests.
+
+The panel also flags a deliberately narrow class of possible documentation conflicts: an explicit `field > number` statement that excludes a documented inclusive numeric minimum. It shows both the contract statement and exact documentation excerpt. **Use the contract for this version** requires a reason and permits generation/execution. **Contract needs revision before testing** records that decision and keeps testing blocked; import a corrected version to change the contract. Unresolved conflicts also block generation and execution at the backend. This is deterministic pattern detection, not general natural-language contradiction detection. Decisions persist under the specification version and never silently rewrite the contract.
+
+Workspace schema migration V2 adds version-scoped conflict decisions. Existing V1 workspace records are preserved. Deleting a project cascades deletion of its decisions with the rest of its data.
+
 ## Response assertions
 
 Select **Edit request**, then **Add response check**. HTTP status equality is always evaluated. Additional checks support exact header equality, JSON field existence, JSON types, JSON equality, inclusive numeric lower/upper bounds and a bounded JSON schema subset. JSON targets use JSON Pointer: `/price`, `/items/0/id`, or an empty pointer for the whole response. Escape `/` as `~1` and `~` as `~0` in property names. Numbers compare numerically; strings are never coerced into numbers. Existing JSON `null` is different from a missing field.
@@ -148,6 +162,9 @@ All JSON endpoints are under `/api`. Error responses use Spring `ProblemDetail`.
 | POST | `/api/plans` | Generate using `{specificationId, endpointKey}` |
 | GET | `/api/plans/{id}` | Reload the current plan and its `scenarioRevisions` |
 | PUT | `/api/plans/{id}/scenarios/{index}` | Save `{expectedRevision, query, body, expectedStatus, assertions}` |
+| GET | `/api/specifications/{id}/coverage?endpointKey=...&planId=...` | Coverage report; omit planId to review before generation |
+| POST | `/api/specifications/{id}/conflicts?endpointKey=...` | Save `{conflictId, choice, reason}` |
+| POST | `/api/plans/{id}/missing-tests` | Append missing probes using `{expectedRevisions: [...]}` |
 | POST | `/api/executions` | Execute `{planId, scenarioIndex, expectedRevision, approved: true}` |
 | POST | `/api/executions/{id}/analysis` | Explain a recorded result |
 | GET | `/actuator/health` | Backend health |

@@ -59,5 +59,9 @@ public final class Models {
                     scenarioRevision,requestSnapshot,Map.of(),false,List.of());
         }
     }
+    public record ConflictDecision(@NotBlank @Size(max=2000) String conflictId,
+                                   @NotBlank @Pattern(regexp="USE_CONTRACT|REVISE_CONTRACT") String choice,
+                                   @NotBlank @Size(max=1000) String reason) {}
+    public record FillMissingRequest(@NotNull List<Integer> expectedRevisions) {}
     public record Analysis(String mode, String explanation) {}
 }

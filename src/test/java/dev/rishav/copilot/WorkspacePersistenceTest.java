@@ -69,4 +69,27 @@ class WorkspacePersistenceTest {
             var service=service(store,new DemoKnowledge());service.deleteProject(id);assertThat(store.projects()).isEmpty();
         }
     }
+    @Test void upgradingVersionOneKeepsDataAndConflictDecisionsSurviveReopen() throws Exception {
+        String url="jdbc:h2:file:"+directory.resolve("upgrade");UUID specId;String conflictId;
+        try(var store=new WorkspaceStore(json,url,"sa","")) {
+            var service=service(store,new DemoKnowledge());
+            specId=service.importSpecification(new ImportRequest("Conflicting",OpenApiReaderTest.example(),"price > 0",null)).id();
+        }
+        // Recreate the pre-phase-4 schema state while keeping real version-one records.
+        try(var connection=java.sql.DriverManager.getConnection(url,"sa","");var statement=connection.createStatement()) {
+            statement.execute("DROP TABLE conflict_decisions");statement.execute("DELETE FROM workspace_migrations WHERE version=2");
+        }
+        try(var store=new WorkspaceStore(json,url,"sa","")) {
+            var service=service(store,new DemoKnowledge());
+            var report=service.coverage(specId,"POST /products",null);conflictId=report.conflicts().getFirst().id();
+            service.resolve(specId,"POST /products",new ConflictDecision(conflictId,"USE_CONTRACT","Contract confirmed"));
+        }
+        try(var store=new WorkspaceStore(json,url,"sa","")) {
+            var service=service(store,new DemoKnowledge());
+            assertThat(service.coverage(specId,"POST /products",null).conflicts().getFirst().reason()).isEqualTo("Contract confirmed");
+            assertThat(service.generate(new GenerateRequest(specId,"POST /products")).scenarios()).isNotEmpty();
+            service.deleteProject(store.projects().getFirst().id());assertThat(store.decisions()).isEmpty();
+        }
+    }
+
 }

@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS conflict_decisions (id VARCHAR(2000) PRIMARY KEY, specification_id VARCHAR(36) NOT NULL REFERENCES specifications(id) ON DELETE CASCADE, payload TEXT NOT NULL);

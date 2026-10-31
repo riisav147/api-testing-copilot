@@ -24,6 +24,9 @@ public class ApiController {
     @GetMapping("/plans/{id}") public Plan plan(@PathVariable UUID id) { return service.plan(id); }
     @PutMapping("/plans/{id}/scenarios/{index}") public Plan edit(@PathVariable UUID id, @PathVariable int index,
             @Valid @RequestBody EditScenarioRequest request) { return service.editScenario(id,index,request); }
+    @GetMapping("/specifications/{id}/coverage") public ContractCoverage.Report coverage(@PathVariable UUID id,@RequestParam String endpointKey,@RequestParam(required=false) UUID planId) { return service.coverage(id,endpointKey,planId); }
+    @PostMapping("/specifications/{id}/conflicts") public ContractCoverage.Report resolve(@PathVariable UUID id,@RequestParam String endpointKey,@Valid @RequestBody ConflictDecision decision) { return service.resolve(id,endpointKey,decision); }
+    @PostMapping("/plans/{id}/missing-tests") public Plan fill(@PathVariable UUID id,@Valid @RequestBody FillMissingRequest request) { return service.fillMissing(id,request); }
     @PostMapping("/executions") public Execution execute(@Valid @RequestBody ExecuteRequest request) { return service.execute(request); }
     @PostMapping("/executions/{id}/analysis") public Analysis analyse(@PathVariable UUID id) { return service.analyse(id); }
 }

@@ -91,3 +91,11 @@ This app binds to loopback and has no login or tenant isolation. Endpoint metada
 The tool guard covers repeated calls within one model invocation. It does not cover duplicate user submissions, retries by clients, crashes between a network side effect and storing its result, or a second process. Durable idempotency would require a unique request key, state transitions, a persisted request hash and careful handling of uncertain network outcomes.
 
 Local input bounds reduce accidental resource use, but this is not a hardened multi-user ingestion service. Production requirements include strict HTTP body limits, full schema validation, authentication, encryption/access policies for documents, provider data policies, outbound network isolation, database lifecycle migrations and audited approvals.
+
+## Rule provenance and coverage
+
+`ContractCoverage` derives bounded request probes from the normalized endpoint but resolves source pointers against the original saved contract, following local references. Rule identity includes the specification UUID, source pointer and probe kind, so different specification versions cannot share decisions accidentally. Coverage is computed from current saved requests; it is not trusted from AI output or stored permanently as a stale score. Only recorded runs of the current scenario revision contribute to execution status.
+
+Missing-case generation runs under the service lock, checks the complete expected revision list, appends cases/evidence and persists a new plan snapshot. Existing indexes and revisions remain intact. Duplicate represented probes are skipped; edited generated cases remain and receive distinct replacement candidates when necessary. The 12-case limit leaves excess gaps visible rather than discarding existing work.
+
+Conflict detection recognizes only explicit numeric strict-lower-bound statements in supporting documentation. A migration-backed decision is scoped to the detected conflict and specification. Both ordinary generation and execution enforce the decision gate; model output cannot resolve it. Interpretation does not mutate contract text or turn the conflict detector into general semantic validation. Broader schemas, multilingual prose, implicit requirements, and additional conflict forms require separate work and evaluation.

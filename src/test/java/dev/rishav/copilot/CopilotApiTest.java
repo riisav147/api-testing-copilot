@@ -180,4 +180,39 @@ class CopilotApiTest {
         assertThat(post("/api/executions",Map.of("planId",second.path("id").asText(),"scenarioIndex",0,"expectedRevision",1,"approved",true)).statusCode()).isEqualTo(200);
     }
 
+    private JsonNode get(String path) throws Exception {
+        return mapper.readTree(client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+port+path)).GET().build(),HttpResponse.BodyHandlers.ofString()).body());
+    }
+    @Test void missingTestsPreserveEditsAndRecomputeCoverageByCurrentRevision() throws Exception {
+        var plan=createPlan();String id=plan.path("id").asText();String spec=plan.path("specificationId").asText();
+        var coveragePath="/api/specifications/"+spec+"/coverage?endpointKey=POST%20%2Fproducts&planId="+id;
+        var before=get(coveragePath);assertThat(before.path("rules").toString()).contains("MISSING","MINIMUM");
+        var edited=mapper.readTree(edit(id,0,Map.of("expectedRevision",1,"query",Map.of(),"body",Map.of("name","Keep my edit","price",20),"expectedStatus",201)).body());
+        var response=post("/api/plans/"+id+"/missing-tests",Map.of("expectedRevisions",mapper.convertValue(edited.path("scenarioRevisions"),List.class)));
+        assertThat(response.statusCode()).isEqualTo(200);var updated=mapper.readTree(response.body());
+        assertThat(updated.path("scenarios").get(0)).isEqualTo(edited.path("scenarios").get(0));
+        assertThat(updated.path("scenarios").size()).isGreaterThan(3);
+        assertThat(post("/api/plans/"+id+"/missing-tests",Map.of("expectedRevisions",mapper.convertValue(updated.path("scenarioRevisions"),List.class))).body()).isEqualTo(response.body());
+        assertThat(post("/api/plans/"+id+"/missing-tests",Map.of("expectedRevisions",List.of(1,1,1))).statusCode()).isEqualTo(409);
+        var changed=mapper.readTree(edit(id,3,Map.of("expectedRevision",1,"query",Map.of(),"body",Map.of("name","Keep edited rule case","price",10),"expectedStatus",400)).body());
+        var filledAgain=mapper.readTree(post("/api/plans/"+id+"/missing-tests",Map.of("expectedRevisions",mapper.convertValue(changed.path("scenarioRevisions"),List.class))).body());
+        assertThat(filledAgain.path("scenarios").size()).isGreaterThan(updated.path("scenarios").size());
+        assertThat(filledAgain.path("scenarios").get(3)).isEqualTo(changed.path("scenarios").get(3));
+        var edge=post("/api/executions",Map.of("planId",id,"scenarioIndex",2,"expectedRevision",1,"approved",true));assertThat(edge.statusCode()).isEqualTo(200);
+        var report=get(coveragePath);assertThat(report.path("rules").toString()).contains("FAILED");
+        edit(id,2,Map.of("expectedRevision",1,"query",Map.of(),"body",Map.of("name","Changed boundary","price",0),"expectedStatus",201));
+        assertThat(get(coveragePath).path("rules").toString()).doesNotContain("FAILED");
+    }
+    @Test void conflictingDocumentationRequiresExplicitVersionScopedDecision() throws Exception {
+        var imported=mapper.readTree(post("/api/specifications",Map.of("name","Conflict","content",OpenApiReaderTest.example(),"documentation","price > 0")).body());
+        String id=imported.path("id").asText();String path="/api/specifications/"+id+"/coverage?endpointKey=POST%20%2Fproducts";
+        assertThat(post("/api/plans",Map.of("specificationId",id,"endpointKey","POST /products")).statusCode()).isEqualTo(409);
+        var conflict=get(path).path("conflicts").get(0);String resolve="/api/specifications/"+id+"/conflicts?endpointKey=POST%20%2Fproducts";
+        assertThat(post(resolve,Map.of("conflictId",conflict.path("id").asText(),"choice","USE_CONTRACT","reason","Reviewed with API owner")).statusCode()).isEqualTo(200);
+        assertThat(post("/api/plans",Map.of("specificationId",id,"endpointKey","POST /products")).statusCode()).isEqualTo(200);
+        assertThat(get(path).path("conflicts").get(0).path("reason").asText()).isEqualTo("Reviewed with API owner");
+        assertThat(post(resolve,Map.of("conflictId",conflict.path("id").asText(),"choice","REVISE_CONTRACT","reason","Needs correction")).statusCode()).isEqualTo(200);
+        assertThat(post("/api/plans",Map.of("specificationId",id,"endpointKey","POST /products")).statusCode()).isEqualTo(409);
+    }
+
 }
