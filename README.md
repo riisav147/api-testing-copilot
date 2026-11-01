@@ -6,7 +6,7 @@ The central constraint: a model can suggest a test, but application code decides
 
 ## Run the working demo
 
-Requirements: JDK 21 or newer; Node 20.19+ or 22.12+; internet for the first dependency download. Maven is included through the Apache Maven wrapper. The default demo needs no database, Docker, or provider key.
+Requirements: JDK 21 or newer; Node 20.19+ or 22.12+; internet for the first dependency download. Maven is included through the Apache Maven wrapper. The default demo needs no database, Docker, or provider key. Python 3 and a POSIX `sh` are also required for the headless runner and full verification suite.
 
 Terminal 1, from the repository root:
 
@@ -67,6 +67,12 @@ The UI first creates a durable approval for the exact plan/scenario revision and
 The browser retains the pending approval ID for an action so a network retry can reuse it. Selecting another environment clears the visible approval; it is not restored as checked after refresh. Completed executions and history display their target. No application-level automatic retry is used for writes. HTTP execution has a five-second deadline covering response capture; capture stops after 8,192 bytes plus one truncation lookahead byte.
 
 API clients now call `POST /api/approvals` with `{planId, scenarioIndex, expectedRevision, environmentId, approved:true}` (`environmentId:null` selects the sandbox), then send its `id` as `approvalId` to `/api/executions` with the same fields. Missing durable approval is rejected. `GET /api/approvals/{id}/attempt` returns NOT_STARTED, STARTED, COMPLETED, CANCELLED or UNKNOWN and the completed execution ID when available. Saved approval/attempt records cascade with project deletion. The default workspace remains a single-process local application.
+
+## Reproduce failures and export results
+
+Recorded results now offer **Preview report**, **Copy bug report**, Markdown and cURL downloads, JSON evidence and JUnit XML. Reports retain the executed request/assertion revision, related contract rule pointers, expected/actual checks and bounded response evidence. They distinguish observations from an unestablished root cause and label truncated capture. Authentication uses environment-variable placeholders; new executions retain their original target configuration. Reproduction sends a new request, so review the target and fixture state first.
+
+Batch history also exports JSON and JUnit. The Python 3 headless runner executes explicit saved revisions with target authorization, writes artifacts and exits unsuccessfully when a selected test fails or has an incomplete outcome. Submission IDs are retained to prevent a lost response from creating a second job. See [headless execution and report formats](docs/CI.md) for configuration, retries, exit codes, credential handling and the synthetic CI example.
 
 ## Batch execution
 
@@ -175,6 +181,7 @@ To reproduce a live smoke check after configuring API billing, run `python3 scri
 
 ```sh
 ./mvnw verify
+python3 -m unittest discover -s scripts/tests -v
 cd frontend
 npm ci
 npm test
@@ -223,6 +230,8 @@ All JSON endpoints are under `/api`. Error responses use Spring `ProblemDetail`.
 | POST | `/api/batches/{id}/cancel` | Cancel pending cases; claimed requests finish |
 | GET | `/api/projects/{id}/batches` | Saved batch history for a project |
 | POST | `/api/executions` | Execute with matching approvalId, environmentId and reviewed revision |
+| GET | `/api/executions/{id}/report?format=json` | Recorded result report; also markdown, curl and junit |
+| GET | `/api/batches/{id}/export?format=json` | Batch JSON/JUnit export, including incomplete states |
 | POST | `/api/executions/{id}/analysis` | Explain a recorded result |
 | GET | `/actuator/health` | Backend health |
 

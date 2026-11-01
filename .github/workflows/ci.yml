@@ -15,6 +15,46 @@ jobs:
           java-version: '21'
           cache: maven
       - run: ./mvnw -B -ntp verify
+      - run: python3 -m unittest discover -s scripts/tests -v
+      - name: Verify packaged headless runner and report artifacts
+        shell: bash
+        run: |
+          mkdir -p .tools/ci
+          java -jar target/api-testing-copilot-0.1.0-SNAPSHOT.jar --spring.profiles.active=demo --copilot.storage-url=jdbc:h2:file:./.tools/ci/workspace > .tools/ci/backend.log 2>&1 &
+          backend_pid=$!
+          trap 'kill "$backend_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..40}; do
+            if curl --silent --fail http://127.0.0.1:8080/actuator/health > /dev/null; then break; fi
+            sleep 0.5
+          done
+          curl --silent --fail http://127.0.0.1:8080/actuator/health
+          python3 scripts/copilot-ci.py prepare-demo --config .tools/ci/config.json
+          set +e
+          python3 scripts/copilot-ci.py run --config .tools/ci/config.json --authorize-target sandbox --output target/copilot-ci/failing
+          result=$?
+          set -e
+          test "$result" -eq 1
+          python3 - <<'PYTHON'
+          import json
+          from pathlib import Path
+          from xml.etree import ElementTree as ET
+          report = json.loads(Path('target/copilot-ci/failing/results.json').read_text())
+          assert [c['state'] for c in report['cases']] == ['PASSED', 'PASSED', 'FAILED']
+          assert ET.parse('target/copilot-ci/failing/junit.xml').getroot().get('failures') == '1'
+          config = json.loads(Path('.tools/ci/config.json').read_text())
+          config['cases'] = config['cases'][:2]
+          Path('.tools/ci/passing.json').write_text(json.dumps(config))
+          PYTHON
+          python3 scripts/copilot-ci.py run --config .tools/ci/passing.json --authorize-target sandbox --output target/copilot-ci/passing
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: copilot-ci-results
+          path: |
+            target/copilot-ci/*/results.json
+            target/copilot-ci/*/junit.xml
+          if-no-files-found: warn
+          retention-days: 7
   frontend:
     runs-on: ubuntu-latest
     defaults:
