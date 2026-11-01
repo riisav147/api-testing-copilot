@@ -136,7 +136,7 @@ public class CopilotService {
         var p=(Prepared)prepared;
         try {
             var execution=workflow.executeApproved(()->p.environment()==null?runner.execute(p.plan(),request.scenarioIndex()):targets.redact(runner.executeAt(p.plan(),request.scenarioIndex(),p.environment(),p.headers()),p.environment()));
-            synchronized(this) { store.completeAttempt(p.approval().id(),execution);executions.put(execution.id(),execution); }
+            synchronized(this) { store.completeAttempt(p.approval().id(),execution,new ExecutionContext(p.environment()==null?runner.sandboxBase():p.environment().baseUrl(),p.environment()));executions.put(execution.id(),execution); }
             return execution;
         } catch(RuntimeException failure) {
             synchronized(this) { store.uncertain(p.approval().id()); }
@@ -167,6 +167,10 @@ public class CopilotService {
     public synchronized BatchJob createBatch(BatchRequest r) {
         if(!r.approved())throw ApiException.badRequest("Review and approve the selected batch first");
         var p=plan(r.planId());var spec=saved.get(p.specificationId());
+        var target=r.environmentId()==null?null:environment(spec.projectId(),r.environmentId());
+        if((r.expectedEnvironmentRevision()!=null&&r.expectedEnvironmentRevision()!=(target==null?0:target.revision()))
+                ||(r.expectedTarget()!=null&&!r.expectedTarget().equals(target==null?"bundled localhost sandbox":target.baseUrl())))
+            throw new ApiException(HttpStatus.CONFLICT,"Target configuration changed since review. Review and authorize the current target.");
         var seen=new HashSet<Integer>();var cases=new ArrayList<BatchCase>();var approvals=new ArrayList<Approval>();
         for(var selected:r.cases()) {
             if(!seen.add(selected.scenarioIndex()))throw ApiException.badRequest("Select each scenario once");
@@ -179,6 +183,8 @@ public class CopilotService {
         var now=Instant.now();var job=new BatchJob(r.id(),spec.projectId(),p.id(),r.environmentId(),approvals.getFirst().target(),r.environmentId()==null?null:environment(spec.projectId(),r.environmentId()),r.parallelism(),r.independent(),List.copyOf(cases),"QUEUED",false,now,now);
         store.createBatch(job,approvals);return job;
     }
+    public Execution execution(UUID id) { var e=required(executions,id);plan(e.planId());return e; }
+    public SavedSpecification savedSpecification(UUID id) { var s=required(saved,id);activeProject(s.projectId());return s; }
     public synchronized Analysis analyse(UUID id) {
         var execution=required(executions,id); plan(execution.planId());
         var analysis=workflow.analyse(execution); store.saveAnalysis(id,analysis); analyses.put(id,analysis); return analysis;

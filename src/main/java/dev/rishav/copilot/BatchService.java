@@ -35,7 +35,9 @@ public class BatchService implements AutoCloseable {
     public synchronized BatchJob submit(BatchRequest r) {
         var old=store.batch(r.id());
         if(old!=null) {
-            boolean same=old.planId().equals(r.planId())&&Objects.equals(old.environmentId(),r.environmentId())&&old.parallelism()==r.parallelism()&&old.independent()==r.independent()&&old.cases().size()==r.cases().size();
+            boolean same=old.planId().equals(r.planId())&&Objects.equals(old.environmentId(),r.environmentId())&&old.parallelism()==r.parallelism()&&old.independent()==r.independent()
+                    &&(r.expectedTarget()==null||r.expectedTarget().equals(old.target()))
+                    &&(r.expectedEnvironmentRevision()==null||r.expectedEnvironmentRevision()==(old.environmentSnapshot()==null?0:old.environmentSnapshot().revision()))&&old.cases().size()==r.cases().size();
             for(int i=0;same&&i<r.cases().size();i++)same=old.cases().get(i).scenarioIndex()==r.cases().get(i).scenarioIndex()&&old.cases().get(i).scenarioRevision()==r.cases().get(i).expectedRevision();
             if(!same||!r.approved())throw new ApiException(HttpStatus.CONFLICT,"Batch ID already belongs to a different approved selection");
             return old;

@@ -22,6 +22,7 @@ public class SandboxRunner {
     private final AssertionEngine assertions=new AssertionEngine();
     public SandboxRunner(ServletWebServerApplicationContext context, ObjectMapper mapper) { this.context=context; this.mapper=mapper; }
 
+    public String sandboxBase() { return "http://127.0.0.1:"+context.getWebServer().getPort()+"/sandbox"; }
     public Execution execute(Plan plan, int index) {
         return executeAt(plan,index,null,Map.of());
     }
@@ -31,7 +32,7 @@ public class SandboxRunner {
         try {
             String query=s.query().entrySet().stream().map(e -> encode(e.getKey())+"="+encode(e.getValue())).collect(Collectors.joining("&"));
             if(!s.path().matches("/[A-Za-z0-9_./~-]*")||s.path().contains("..")||s.path().startsWith("//"))throw ApiException.badRequest("Unsafe request path");
-            String base=environment==null?"http://127.0.0.1:"+context.getWebServer().getPort()+"/sandbox":environment.baseUrl().replaceAll("/+$","");
+            String base=environment==null?sandboxBase():environment.baseUrl().replaceAll("/+$","");
             URI target=URI.create(base+s.path()+(query.isEmpty()?"":"?"+query));
             var builder=HttpRequest.newBuilder(target).timeout(Duration.ofSeconds(5)).header("Content-Type","application/json");
             headers.forEach(builder::setHeader);

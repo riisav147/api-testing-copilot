@@ -241,4 +241,39 @@ class CopilotApiTest {
         assertThat(mapper.readTree(post("/api/batches/"+id+"/cancel",Map.of()).body())).isEqualTo(job);
     }
 
+    @Test void exportsRecordedFailureAsMarkdownShellJsonAndJunitWithoutExecutingAgain() throws Exception {
+        var plan=createPlan();String id=plan.path("id").asText();
+        var e=mapper.readTree(post("/api/executions",Map.of("planId",id,"scenarioIndex",2,"expectedRevision",1,"approved",true)).body());
+        String run=e.path("id").asText();
+        for(String format:List.of("markdown","curl","json","junit")) {
+            var response=client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+port+"/api/executions/"+run+"/report?format="+format)).GET().build(),HttpResponse.BodyHandlers.ofString());
+            assertThat(response.statusCode()).isEqualTo(200);assertThat(response.headers().firstValue("Content-Disposition").orElse("")).contains("attachment");
+            assertThat(response.headers().firstValue("Cache-Control").orElse("")).isEqualTo("no-store");
+            if(format.equals("json"))assertThat(mapper.readTree(response.body()).path("execution").path("id").asText()).isEqualTo(run);
+            if(format.equals("markdown"))assertThat(response.body()).contains("Expected HTTP 201; observed HTTP 400","/price/minimum");
+            if(format.equals("curl"))assertThat(response.body()).contains("http://127.0.0.1:"+port+"/sandbox/products");
+            if(format.equals("junit"))assertThat(response.body()).contains("failures=\"1\"");
+        }
+        var unknown=client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+port+"/api/executions/"+UUID.randomUUID()+"/report")).GET().build(),HttpResponse.BodyHandlers.ofString());assertThat(unknown.statusCode()).isEqualTo(404);
+    }
+
+    @Test void headlessCliProducesArtifactsAndPreservesSubmissionIdentity(@org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws Exception {
+        var plan=createPlan();var config=mapper.createObjectNode();config.set("planId",plan.get("id"));config.putNull("environmentId");config.put("parallelism",1);config.put("independent",false);
+        config.set("cases",mapper.valueToTree(List.of(Map.of("scenarioIndex",0,"expectedRevision",1),Map.of("scenarioIndex",1,"expectedRevision",1))));
+        var path=directory.resolve("config.json");mapper.writeValue(path.toFile(),config);
+        String originalSubmission=null;
+        for(int attempt=0;attempt<3;attempt++) {
+            if(attempt==2){config.set("cases",mapper.valueToTree(List.of(Map.of("scenarioIndex",2,"expectedRevision",1))));mapper.writeValue(path.toFile(),config);}
+            var output=directory.resolve(attempt==2?"failed":"passed");
+            var process=new ProcessBuilder("python3","scripts/copilot-ci.py","--server-url","http://127.0.0.1:"+port,"run","--config",path.toString(),"--authorize-target","sandbox","--output",output.toString()).redirectErrorStream(true).start();
+            boolean ended=process.waitFor(20,java.util.concurrent.TimeUnit.SECONDS);if(!ended)process.destroyForcibly();assertThat(ended).isTrue();
+            String log=new String(process.getInputStream().readAllBytes(),java.nio.charset.StandardCharsets.UTF_8);assertThat(process.exitValue()).withFailMessage(log).isEqualTo(attempt==2?1:0);
+            var report=mapper.readTree(output.resolve("results.json").toFile());assertThat(report.path("success").asBoolean()).isEqualTo(attempt!=2);
+            assertThat(java.nio.file.Files.readString(output.resolve("junit.xml"))).contains("<testsuite");
+            if(attempt==0)originalSubmission=report.path("id").asText();if(attempt==1)assertThat(report.path("id").asText()).isEqualTo(originalSubmission);
+        }
+        var response=client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+port+"/api/specifications/"+plan.path("specificationId").asText()+"/workspace")).GET().build(),HttpResponse.BodyHandlers.ofString());
+        assertThat(mapper.readTree(response.body()).path("executions")).hasSize(3);
+    }
+
 }

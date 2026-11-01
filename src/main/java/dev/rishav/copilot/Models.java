@@ -78,12 +78,18 @@ public final class Models {
     public record BatchSelection(@Min(0) int scenarioIndex,@Min(1) int expectedRevision) {}
     public record BatchRequest(@NotNull UUID id,@NotNull UUID planId,UUID environmentId,
                                @NotEmpty @Size(max=12) List<@NotNull @jakarta.validation.Valid BatchSelection> cases,
-                               @Min(1) @Max(2) int parallelism,boolean independent,@AssertTrue boolean approved) {}
+                               @Min(1) @Max(2) int parallelism,boolean independent,@AssertTrue boolean approved,
+                               @Min(0) Integer expectedEnvironmentRevision,@Size(max=300) String expectedTarget) {
+        public BatchRequest(UUID id,UUID planId,UUID environmentId,List<BatchSelection> cases,int parallelism,boolean independent,boolean approved) {
+            this(id,planId,environmentId,cases,parallelism,independent,approved,null,null);
+        }
+    }
     public record BatchCase(int scenarioIndex,int scenarioRevision,UUID approvalId,Scenario snapshot,
                             String state,UUID executionId,String detail) {}
     public record BatchJob(UUID id,UUID projectId,UUID planId,UUID environmentId,String target,TargetEnvironment environmentSnapshot,
                            int parallelism,boolean independent,List<BatchCase> cases,String state,
                            boolean cancelRequested,Instant createdAt,Instant updatedAt) {}
+    public record ExecutionContext(String baseUrl,TargetEnvironment environment) {}
     public record Attempt(String state,UUID executionId) {}
     public record ConflictDecision(@NotBlank @Size(max=2000) String conflictId,
                                    @NotBlank @Pattern(regexp="USE_CONTRACT|REVISE_CONTRACT") String choice,
