@@ -1,5 +1,28 @@
 # Evaluation: what is actually measured
 
+## Release-candidate regression corpus
+
+`src/test/resources/evaluation/corpus.json` contains ten authored synthetic operations: inclusive numeric minimum/maximum, string minimum/maximum length, enum, required field, absent resource, required query, response-field correctness and combined numeric bounds. `ReleaseEvaluationTest` uses independent fixture-oracle constants rather than deriving expected HTTP behavior from the generator. It generates one plan per fixture, explicitly fills supported missing probes, then executes each saved case against the healthy and deliberate-defect variants through actual localhost HTTP. It never repairs the generated tests to improve a score.
+
+Run `./mvnw -Dtest=ReleaseEvaluationTest test`. The machine-readable evidence is `target/evaluation/demo-results.json`, including every request, healthy/mutant outcomes, generation-and-fill elapsed milliseconds and observed HTTP durations. Full `verify` and release packaging run it too. CI publishes the result; local generated evidence remains ignored.
+
+The deterministic baseline currently measures:
+
+| Measure | Numerator / denominator | Definition |
+| --- | --- | --- |
+| Structural acceptance | 10 / 10 operations | Generated drafts accepted by the existing validator |
+| Healthy-fixture agreement | 34 / 34 cases | Configured checks pass against the independently authored healthy oracle |
+| Misleading healthy failures | 0 / 34 cases | Tests reporting failure against a healthy fixture |
+| Supported-probe representation | 24 / 24 probes | Existing supported request probes represented after explicit rule fill |
+| Authored behavior representation | 25 / 27 behaviors | Explicit corpus behaviors represented by saved inputs/checks, including absent-resource, missing-query and response-field behavior |
+| Useful defect detection | 8 / 10 fixture defects | At least one case passes on the healthy variant and fails on that fixture's mutant |
+
+Two intentional gaps remain: the required-query fixture has no missing-query scenario, and the response-value fixture's status-only generated checks miss a negative price returned with HTTP 201. These are measured deficiencies, not silently excluded samples. Response assertions can be added by a user, but this benchmark does not claim they were generated. Each fixture has a single defined mutant; it does not measure the probability of detecting arbitrary defects.
+
+The corpus has **not received independent human sign-off**. Its metadata says so. Before claiming human-reviewed quality, have a reviewer inspect each contract, fixture oracle, behavior list and mutant independently; record reviewer/date, corrections and disputed expectations in a separate reviewed corpus version. Do not label authored synthetic data as externally validated. There is one deterministic generation per operation, no held-out statistical estimate and no claim of real-world coverage.
+
+The report records generator/configuration, Java runtime, corpus version and measurement timestamp. It makes zero provider requests and has zero provider usage cost. It records live AI verification as NOT_RUN; model quality, live model latency, tokens and provider cost remain unavailable rather than being inferred from the deterministic baseline. The live protocol below remains separate.
+
 ## Current deterministic measurements
 
 `PlanEvaluator` reports:

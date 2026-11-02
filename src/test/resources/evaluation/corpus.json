@@ -1,0 +1,16 @@
+{
+  "version": "1",
+  "reviewStatus": "Authored synthetic expectations; independent human sign-off pending",
+  "fixtures": [
+    {"id":"minimum","method":"POST","path":"/products","schema":{"type":"object","required":["qty"],"properties":{"qty":{"type":"integer","minimum":0,"example":2}}},"behaviors":["qty:MISSING","qty:MINIMUM","qty:BELOW_MINIMUM"],"defect":"Rejects the allowed inclusive zero minimum"},
+    {"id":"maximum","method":"POST","path":"/products","schema":{"type":"object","required":["qty"],"properties":{"qty":{"type":"integer","maximum":5,"example":2}}},"behaviors":["qty:MISSING","qty:MAXIMUM","qty:ABOVE_MAXIMUM"],"defect":"Accepts quantity above five"},
+    {"id":"minLength","method":"POST","path":"/products","schema":{"type":"object","required":["code"],"properties":{"code":{"type":"string","minLength":2,"example":"ok"}}},"behaviors":["code:MISSING","code:MINLENGTH","code:TOO_SHORT"],"defect":"Accepts a one-character code"},
+    {"id":"maxLength","method":"POST","path":"/products","schema":{"type":"object","required":["code"],"properties":{"code":{"type":"string","maxLength":4,"example":"ok"}}},"behaviors":["code:MISSING","code:MAXLENGTH","code:TOO_LONG"],"defect":"Accepts a five-character code"},
+    {"id":"enum","method":"POST","path":"/products","schema":{"type":"object","required":["code"],"properties":{"code":{"type":"string","enum":["a","b"],"example":"a"}}},"behaviors":["code:MISSING","code:ENUM_VALID","code:ENUM_INVALID"],"defect":"Accepts an excluded enum value"},
+    {"id":"required","method":"POST","path":"/products","schema":{"type":"object","required":["code"],"properties":{"code":{"type":"string","example":"ok"}}},"behaviors":["code:MISSING"],"defect":"Accepts a missing required code"},
+    {"id":"resource","method":"GET","path":"/products/{id}","behaviors":["RESOURCE_NOT_FOUND"],"defect":"Returns success for absent fixture ID 999999"},
+    {"id":"query","method":"GET","path":"/products","behaviors":["QUERY_MISSING"],"defect":"Accepts a missing required limit query parameter"},
+    {"id":"response","method":"POST","path":"/products","schema":{"type":"object","required":["qty"],"properties":{"qty":{"type":"integer","minimum":0,"example":2}}},"behaviors":["qty:MISSING","qty:MINIMUM","qty:BELOW_MINIMUM","RESPONSE_PRICE_NONNEGATIVE"],"defect":"Returns a negative price with correct HTTP status; generated status-only checks miss it"},
+    {"id":"combined","method":"POST","path":"/products","schema":{"type":"object","required":["qty"],"properties":{"qty":{"type":"integer","minimum":0,"maximum":3,"example":2}}},"behaviors":["qty:MISSING","qty:MINIMUM","qty:BELOW_MINIMUM","qty:MAXIMUM","qty:ABOVE_MAXIMUM"],"defect":"Rejects zero despite inclusive lower bound, with an independent upper bound"}
+  ]
+}
