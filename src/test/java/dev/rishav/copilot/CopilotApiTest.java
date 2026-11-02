@@ -276,4 +276,23 @@ class CopilotApiTest {
         assertThat(mapper.readTree(response.body()).path("executions")).hasSize(3);
     }
 
+    @Test void changedContractCreatesAReviewedPlanWithSeparateApprovalAndBeforeAfterEvidence() throws Exception {
+        var original=createPlan();String sourceId=original.path("id").asText(),specId=original.path("specificationId").asText();
+        var oldApproval=mapper.readTree(post("/api/approvals",Map.of("planId",sourceId,"scenarioIndex",2,"expectedRevision",1,"approved",true)).body()).path("id").asText();
+        var before=mapper.readTree(post("/api/executions",Map.of("planId",sourceId,"scenarioIndex",2,"expectedRevision",1,"approved",true,"approvalId",oldApproval)).body());assertThat(before.path("passed").asBoolean()).isFalse();
+        var workspace=mapper.readTree(client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+port+"/api/specifications/"+specId+"/workspace")).GET().build(),HttpResponse.BodyHandlers.ofString()).body());String project=workspace.path("project").path("id").asText();
+        var imported=mapper.readTree(post("/api/specifications",Map.of("name","Minimum one","content",OpenApiReaderTest.example().replace("minimum: 0","minimum: 1"),"projectId",project)).body());String next=imported.path("id").asText();
+        var diffResponse=client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+port+"/api/projects/"+project+"/contract-diff?from="+specId+"&to="+next+"&planId="+sourceId)).GET().build(),HttpResponse.BodyHandlers.ofString());assertThat(diffResponse.statusCode()).isEqualTo(200);var diff=mapper.readTree(diffResponse.body());
+        assertThat(diff.path("impacts").get(2).path("state").asText()).isEqualTo("AFFECTED");String rule=diff.path("impacts").get(2).path("suggestions").get(0).path("ruleId").asText();
+        var body=new LinkedHashMap<String,Object>();body.put("id",UUID.randomUUID());body.put("targetSpecificationId",next);body.put("expectedRevisions",List.of(1,1,1));body.put("choices",List.of(Map.of("scenarioIndex",2,"action","ADOPT_INPUT","ruleId",rule)));body.put("reviewed",false);
+        assertThat(post("/api/plans/"+sourceId+"/contract-update",body).statusCode()).isEqualTo(400);body.put("reviewed",true);
+        var adoptedResponse=post("/api/plans/"+sourceId+"/contract-update",body);assertThat(adoptedResponse.statusCode()).isEqualTo(200);var adopted=mapper.readTree(adoptedResponse.body());String id=adopted.path("id").asText();
+        assertThat(adopted.path("scenarios").get(0).path("body").path("price").asInt()).isEqualTo(1);assertThat(adopted.path("scenarios").get(0).path("expectedStatus").asInt()).isEqualTo(201);
+        assertThat(post("/api/executions",Map.of("planId",id,"scenarioIndex",0,"expectedRevision",1,"approved",true,"approvalId",oldApproval)).statusCode()).isEqualTo(409);
+        var after=mapper.readTree(post("/api/executions",Map.of("planId",id,"scenarioIndex",0,"expectedRevision",1,"approved",true)).body());assertThat(after.path("passed").asBoolean()).isTrue();
+        var history=mapper.readTree(client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+port+"/api/plans/"+id+"/contract-update")).GET().build(),HttpResponse.BodyHandlers.ofString()).body());
+        assertThat(history.path("before").get(0).path("id").asText()).isEqualTo(before.path("id").asText());assertThat(history.path("after").get(0).path("id").asText()).isEqualTo(after.path("id").asText());
+        assertThat(latest(sourceId)).isEqualTo(original);assertThat(mapper.readTree(post("/api/plans/"+sourceId+"/contract-update",body).body())).isEqualTo(adopted);
+    }
+
 }

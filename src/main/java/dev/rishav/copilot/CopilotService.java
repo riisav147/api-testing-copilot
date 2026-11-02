@@ -183,6 +183,51 @@ public class CopilotService {
         var now=Instant.now();var job=new BatchJob(r.id(),spec.projectId(),p.id(),r.environmentId(),approvals.getFirst().target(),r.environmentId()==null?null:environment(spec.projectId(),r.environmentId()),r.parallelism(),r.independent(),List.copyOf(cases),"QUEUED",false,now,now);
         store.createBatch(job,approvals);return job;
     }
+    public synchronized ContractDiff.Report compareContracts(UUID projectId,UUID fromId,UUID toId,UUID planId) {
+        activeProject(projectId);var from=savedSpecification(fromId);var to=savedSpecification(toId);
+        if(!from.projectId().equals(projectId)||!to.projectId().equals(projectId))throw ApiException.badRequest("Both versions must belong to this project");
+        return new ContractDiff().compare(from,to,planId==null?null:plan(planId));
+    }
+    public synchronized Plan adoptPlan(UUID sourceId,AdoptPlanRequest request) {
+        var previous=store.adoption(request.id());
+        if(previous!=null) {
+            if(!previous.sourcePlanId().equals(sourceId)||!previous.request().equals(request))throw new ApiException(HttpStatus.CONFLICT,"Review ID belongs to a different selection");
+            return plan(previous.targetPlanId());
+        }
+        if(plans.containsKey(request.id()))throw new ApiException(HttpStatus.CONFLICT,"Plan ID already exists");
+        capacity(plans,1000);if(!request.reviewed())throw ApiException.badRequest("Review every selected request before creating the new plan");
+        var source=plan(sourceId);var from=savedSpecification(source.specificationId());var to=savedSpecification(request.targetSpecificationId());
+        var comparison=new ContractDiff().compare(from,to,source);
+        if(!source.scenarioRevisions().equals(request.expectedRevisions()))throw new ApiException(HttpStatus.CONFLICT,"Source plan changed. Compare and review again.");
+        var endpoint=to.specification().endpoints().stream().filter(e->e.key().equals(source.endpointKey())).findFirst().orElseThrow(()->ApiException.badRequest("Operation was removed; generate or author tests for an existing operation"));
+        requireResolved(to,endpoint);
+        String evidenceId="contract:"+to.specification().id()+":"+endpoint.key();
+        var evidence=List.of(new Evidence(evidenceId,"CONTRACT "+endpoint.key()+"\n"+endpoint.contract(),1));
+        var scenarios=new ArrayList<Scenario>();var adopted=new ArrayList<AdoptedCase>();var seen=new HashSet<Integer>();
+        for(var choice:request.choices()) {
+            if(!seen.add(choice.scenarioIndex()))throw ApiException.badRequest("Select each case once");
+            if(choice.scenarioIndex()<0||choice.scenarioIndex()>=source.scenarios().size())throw ApiException.badRequest("Scenario index out of range");
+            var old=source.scenarios().get(choice.scenarioIndex());var impact=comparison.impacts().get(choice.scenarioIndex());Scenario selected=old;
+            if(choice.action().equals("ADOPT_INPUT"))selected=impact.suggestions().stream().filter(s->s.ruleId().equals(choice.ruleId())).findFirst().orElseThrow(()->ApiException.badRequest("Input proposal is unavailable; compare and review again")).request();
+            else if(!choice.action().equals("KEEP")||choice.ruleId()!=null)throw ApiException.badRequest("Choose KEEP without a rule or an available ADOPT_INPUT proposal");
+            var copy=new Scenario(selected.title(),selected.category(),selected.method(),selected.path(),Map.copyOf(selected.query()),selected.body()==null?null:selected.body().deepCopy(),
+                    old.expectedStatus(),"Reviewed copy of plan "+source.id()+", case "+(choice.scenarioIndex()+1)+", revision "+impact.revision()+". Expected status and response checks were retained; review fixture assumptions.",List.of(evidenceId),old.assertions());
+            adopted.add(new AdoptedCase(choice.scenarioIndex(),impact.revision(),scenarios.size(),choice.action(),choice.ruleId(),impact.ruleIds(),old,copy));scenarios.add(copy);
+        }
+        validator.validate(new Draft(scenarios),endpoint,evidence);
+        var now=Instant.now();var result=new Plan(request.id(),to.specification().id(),endpoint.key(),"reviewed",List.copyOf(scenarios),Collections.nCopies(scenarios.size(),1),evidence,evaluator.evaluate(scenarios),now);
+        store.saveAdoptedPlan(result,new PlanAdoption(result.id(),source.id(),source.specificationId(),to.specification().id(),request,List.copyOf(adopted),now));plans.put(result.id(),result);return result;
+    }
+    public synchronized AdoptionComparison adoptionComparison(UUID targetPlanId) {
+        var target=plan(targetPlanId);var adoption=store.adoption(targetPlanId);
+        if(adoption==null)throw new ApiException(HttpStatus.NOT_FOUND,"This plan has no contract update history");
+        var before=new ArrayList<Execution>();var after=new ArrayList<Execution>();
+        for(var c:adoption.cases()) {
+            executions.values().stream().filter(e->e.planId().equals(adoption.sourcePlanId())&&e.scenarioIndex()==c.sourceIndex()&&e.scenarioRevision()==c.sourceRevision()).max(Comparator.comparing(Execution::createdAt)).ifPresent(before::add);
+            executions.values().stream().filter(e->e.planId().equals(targetPlanId)&&e.scenarioIndex()==c.targetIndex()&&e.scenarioRevision()==target.scenarioRevisions().get(c.targetIndex())).max(Comparator.comparing(Execution::createdAt)).ifPresent(after::add);
+        }
+        return new AdoptionComparison(adoption,List.copyOf(before),List.copyOf(after),target.scenarioRevisions());
+    }
     public Execution execution(UUID id) { var e=required(executions,id);plan(e.planId());return e; }
     public SavedSpecification savedSpecification(UUID id) { var s=required(saved,id);activeProject(s.projectId());return s; }
     public synchronized Analysis analyse(UUID id) {

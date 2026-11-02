@@ -27,7 +27,7 @@ public class WorkspaceStore implements AutoCloseable {
         this.mapper=mapper; ds.setJdbcUrl(url); ds.setUsername(user); ds.setPassword(password); ds.setMaximumPoolSize(2);
         db=new JdbcTemplate(ds); tx=new TransactionTemplate(new DataSourceTransactionManager(ds));
         db.execute("CREATE TABLE IF NOT EXISTS workspace_migrations (version INTEGER PRIMARY KEY)");
-        for(int version=1;version<=5;version++) {
+        for(int version=1;version<=6;version++) {
             if(db.queryForObject("SELECT COUNT(*) FROM workspace_migrations WHERE version=?",Integer.class,version)!=0)continue;
             var sql=new ClassPathResource("db/workspace/V"+version+".sql").getContentAsString(StandardCharsets.UTF_8);
             for(String statement:sql.split(";")) if(!statement.isBlank()) db.execute(statement);
@@ -53,6 +53,9 @@ public class WorkspaceStore implements AutoCloseable {
             db.update("INSERT INTO plan_revisions(id,plan_id,payload) VALUES(?,?,?)",UUID.randomUUID().toString(),plan.id().toString(),json(plan));
         });
     }
+    public PlanAdoption adoption(UUID id) {var rows=db.query("SELECT payload FROM plan_adoptions WHERE target_plan_id=?",(r,i)->decode(r.getString(1),PlanAdoption.class),id.toString());return rows.isEmpty()?null:rows.getFirst();}
+    public void saveAdoptedPlan(Plan plan,PlanAdoption adoption) {tx.executeWithoutResult(s->{savePlan(plan,true);
+        db.update("INSERT INTO plan_adoptions(target_plan_id,source_plan_id,payload) VALUES(?,?,?)",plan.id().toString(),adoption.sourcePlanId().toString(),json(adoption));});}
     public void saveExecution(Execution e) { db.update("INSERT INTO executions(id,plan_id,payload) VALUES(?,?,?)",e.id().toString(),e.planId().toString(),json(e)); }
     public void saveAnalysis(UUID id,Analysis a) { tx.executeWithoutResult(s->{db.update("DELETE FROM analyses WHERE execution_id=?",id.toString());db.update("INSERT INTO analyses(execution_id,payload) VALUES(?,?)",id.toString(),json(a));}); }
     public List<ConflictDecision> decisions() { return records("conflict_decisions",ConflictDecision.class); }

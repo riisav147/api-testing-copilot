@@ -15,6 +15,9 @@ public class ApiController {
         return Map.of("mode",service.mode(),"executionTarget","bundled sandbox or explicitly approved allowlisted local development API","storage","persistent workspace database; AI vectors persist in pgvector");
     }
     @GetMapping("/projects") public List<Project> projects() { return service.projects(); }
+    @GetMapping("/projects/{id}/contract-diff") public ContractDiff.Report diff(@PathVariable UUID id,@RequestParam UUID from,@RequestParam UUID to,@RequestParam(required=false) UUID planId) {return service.compareContracts(id,from,to,planId);}
+    @PostMapping("/plans/{id}/contract-update") public Plan adopt(@PathVariable UUID id,@Valid @RequestBody AdoptPlanRequest r) {return service.adoptPlan(id,r);}
+    @GetMapping("/plans/{id}/contract-update") public AdoptionComparison adoption(@PathVariable UUID id) {return service.adoptionComparison(id);}
     @GetMapping("/projects/{id}") public Workspace workspace(@PathVariable UUID id) { return service.workspace(id); }
     @PutMapping("/projects/{id}") public Project rename(@PathVariable UUID id,@Valid @RequestBody ProjectName request) { return service.rename(id,request.name()); }
     @DeleteMapping("/projects/{id}") public Map<String,Boolean> delete(@PathVariable UUID id) { service.deleteProject(id); return Map.of("deleted",true); }

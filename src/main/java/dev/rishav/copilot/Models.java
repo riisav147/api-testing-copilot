@@ -95,5 +95,15 @@ public final class Models {
                                    @NotBlank @Pattern(regexp="USE_CONTRACT|REVISE_CONTRACT") String choice,
                                    @NotBlank @Size(max=1000) String reason) {}
     public record FillMissingRequest(@NotNull List<Integer> expectedRevisions) {}
+    public record AdoptionChoice(@Min(0) int scenarioIndex,@NotBlank @Pattern(regexp="KEEP|ADOPT_INPUT") String action,String ruleId) {}
+    public record AdoptPlanRequest(@NotNull UUID id,@NotNull UUID targetSpecificationId,
+                                   @NotEmpty @Size(max=12) List<@NotNull @Min(1) Integer> expectedRevisions,
+                                   @NotEmpty @Size(max=12) List<@NotNull @jakarta.validation.Valid AdoptionChoice> choices,
+                                   @AssertTrue boolean reviewed) {}
+    public record AdoptedCase(int sourceIndex,int sourceRevision,int targetIndex,String action,String ruleId,
+                              List<String> sourceRuleIds,Scenario sourceSnapshot,Scenario targetSnapshot) {}
+    public record PlanAdoption(UUID targetPlanId,UUID sourcePlanId,UUID sourceSpecificationId,UUID targetSpecificationId,
+                               AdoptPlanRequest request,List<AdoptedCase> cases,Instant createdAt) {}
+    public record AdoptionComparison(PlanAdoption adoption,List<Execution> before,List<Execution> after,List<Integer> currentRevisions) {}
     public record Analysis(String mode, String explanation) {}
 }
