@@ -4,6 +4,12 @@ Generate API test scenarios from an OpenAPI contract, inspect their evidence, ap
 
 The central constraint: a model can suggest a test, but application code decides whether the suggestion is valid and what it may execute.
 
+## Local release candidate
+
+Version **0.1.0-rc.1** can be packaged as one jar serving both the backend and React UI. Run `python3 scripts/build-release.py` from a clean checkout (JDK 21+, supported Node, Python 3 and POSIX shell required to build). It verifies the product, tests the assembled UI/CLI and workspace restart, and writes a ZIP, checksums and source manifest under `target/releases/`. Extract it and run `java -jar copilot.jar --spring.profiles.active=demo`; open localhost:8080. Runtime demo use needs JDK 21+ only, with Python optional for CI commands.
+
+See [release setup, backups and limitations](docs/RELEASE.md). This candidate includes an authored ten-operation synthetic evaluation: **34 healthy agreements, 8/10 deliberate defects detected**, with the two misses documented. Independent human sign-off, a live-AI quality benchmark and broader accessibility review remain pending. See [measurement definitions](docs/EVALUATION.md). This is a local candidate, not a production deployment claim.
+
 ## Run the working demo
 
 Requirements: JDK 21 or newer; Node 20.19+ or 22.12+; internet for the first dependency download. Maven is included through the Apache Maven wrapper. The default demo needs no database, Docker, or provider key. Python 3 and a POSIX `sh` are also required for the headless runner and full verification suite.

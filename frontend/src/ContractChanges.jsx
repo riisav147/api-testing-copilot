@@ -9,6 +9,8 @@ export default function ContractChanges({workspace,locked,onCreated,onPlan,onBus
   const [from,setFrom]=useState(versions.at(-2)?.specification.id||''),[to,setTo]=useState(versions.at(-1)?.specification.id||'');
   const [source,setSource]=useState(()=>workspace.plans.filter(p=>p.specificationId===from).at(-1)?.id||''),[comparison,setReport]=useState(null),[choices,setChoices]=useState({}),[reviewed,setReviewed]=useState(false);
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[id,setId]=useState(()=>crypto.randomUUID());
+  const versionKey=versions.map(v=>v.specification.id).join(',');
+  useEffect(()=>{if(versions.length>=2&&!from)setFrom(versions.at(-2).specification.id);setTo(versions.at(-1)?.specification.id||'');},[versionKey]);
   const plans=workspace.plans.filter(p=>p.specificationId===from);
   const sourcePlan=plans.find(p=>p.id===source);
   const revisions=sourcePlan?.scenarioRevisions.join(',');

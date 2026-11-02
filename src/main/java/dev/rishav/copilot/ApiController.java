@@ -12,7 +12,7 @@ public class ApiController {
     private final BatchService batches;
     public ApiController(CopilotService service,BatchService batches) { this.service=service;this.batches=batches; }
     @GetMapping("/info") public Map<String,Object> info() {
-        return Map.of("mode",service.mode(),"executionTarget","bundled sandbox or explicitly approved allowlisted local development API","storage","persistent workspace database; AI vectors persist in pgvector");
+        return Map.of("version",Optional.ofNullable(getClass().getPackage().getImplementationVersion()).orElse("development"),"mode",service.mode(),"executionTarget","bundled sandbox or explicitly approved allowlisted local development API","storage","persistent workspace database; AI vectors persist in pgvector");
     }
     @GetMapping("/projects") public List<Project> projects() { return service.projects(); }
     @GetMapping("/projects/{id}/contract-diff") public ContractDiff.Report diff(@PathVariable UUID id,@RequestParam UUID from,@RequestParam UUID to,@RequestParam(required=false) UUID planId) {return service.compareContracts(id,from,to,planId);}

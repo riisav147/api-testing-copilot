@@ -142,7 +142,10 @@ def prepare_demo(client, path):
     if destination.exists():
         raise ValueError("Config already exists; use it or choose a new path")
     root = Path(__file__).resolve().parents[1]
-    spec = client.request("/specifications", {"name": "CI synthetic catalog", "content": (root / "src/main/resources/static/examples/catalog.openapi.yaml").read_text()})
+    example = root / "examples/catalog.openapi.yaml"
+    if not example.is_file():
+        example = root / "src/main/resources/static/examples/catalog.openapi.yaml"
+    spec = client.request("/specifications", {"name": "CI synthetic catalog", "content": example.read_text()})
     plan = client.request("/plans", {"specificationId": spec["id"], "endpointKey": "POST /products"})
     config = {"planId": plan["id"], "environmentId": None, "cases": [{"scenarioIndex": i, "expectedRevision": r} for i, r in enumerate(plan["scenarioRevisions"])], "parallelism": 1, "independent": False}
     destination.parent.mkdir(parents=True, exist_ok=True)
