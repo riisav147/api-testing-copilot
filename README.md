@@ -68,6 +68,12 @@ The browser retains the pending approval ID for an action so a network retry can
 
 API clients now call `POST /api/approvals` with `{planId, scenarioIndex, expectedRevision, environmentId, approved:true}` (`environmentId:null` selects the sandbox), then send its `id` as `approvalId` to `/api/executions` with the same fields. Missing durable approval is rejected. `GET /api/approvals/{id}/attempt` returns NOT_STARTED, STARTED, COMPLETED, CANCELLED or UNKNOWN and the completed execution ID when available. Saved approval/attempt records cascade with project deletion. The default workspace remains a single-process local application.
 
+## Understand contract changes
+
+Import another specification version into the same project, then use **Review contract changes** to compare versions and assess an older saved plan. The app shows supported structural changes, source rule links and cases requiring review. For example, changing `price.minimum` from 0 to 1 proposes a new boundary input while retaining its expected status and response checks.
+
+Select and review cases to create a separate plan for the newer contract. Original plans/results stay intact; the new plan requires fresh execution approval. **Contract update history** displays the saved before/after inputs and matching recorded results. Unsupported changes remain UNKNOWN. See [contract comparison scope and workflow](docs/CONTRACT-CHANGES.md) for supported changes, limits and the worked example.
+
 ## Reproduce failures and export results
 
 Recorded results now offer **Preview report**, **Copy bug report**, Markdown and cURL downloads, JSON evidence and JUnit XML. Reports retain the executed request/assertion revision, related contract rule pointers, expected/actual checks and bounded response evidence. They distinguish observations from an unestablished root cause and label truncated capture. Authentication uses environment-variable placeholders; new executions retain their original target configuration. Reproduction sends a new request, so review the target and fixture state first.
@@ -208,6 +214,9 @@ All JSON endpoints are under `/api`. Error responses use Spring `ProblemDetail`.
 | --- | --- | --- |
 | GET | `/api/info` | Mode, target and storage information |
 | GET | `/api/projects` | List saved projects and pending deletions |
+| GET | `/api/projects/{id}/contract-diff?from=…&to=…&planId=…` | Compare version changes and assess a source plan |
+| POST | `/api/plans/{id}/contract-update` | Create a separate reviewed plan for a newer version |
+| GET | `/api/plans/{id}/contract-update` | Original/adopted snapshots and matching before/after results |
 | GET | `/api/projects/{id}` | Project versions, plans, revision snapshots, runs and analyses |
 | PUT | `/api/projects/{id}` | Rename using `{name}` |
 | DELETE | `/api/projects/{id}` | Delete project data and indexed evidence; retry after cleanup failure |

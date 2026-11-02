@@ -7,6 +7,7 @@ import RuleCoverage from './RuleCoverage.jsx';
 import ProjectHistory from './ProjectHistory.jsx';
 import BatchPanel from './BatchPanel.jsx';
 import ReportPanel from './ReportPanel.jsx';
+import ContractChanges, { AdoptionHistory } from './ContractChanges.jsx';
 import ScenarioEditor from './ScenarioEditor.jsx';
 import { readContractFile } from './scenarioDraft.js';
 
@@ -220,6 +221,8 @@ function App() {
             </section></div>}
           <div className="evaluation-notes">{plan.evaluation.warnings.map((warning, i) => <p key={i}>ⓘ {warning}</p>)}</div>
         </>}
+        {workspace && <ContractChanges key={`changes-${workspace.project.id}`} workspace={workspace} locked={locked} onBusy={setConfigBusy} onPlan={p=>showPlan(p)} onCreated={async p=>{const data=await api(`/projects/${workspace.project.id}`);setWorkspace(data);showPlan(p,data);setNotice('New reviewed plan saved. Review the displayed target and approve before executing; original plans and results are retained.');}}/>}
+        {workspace && plan && <AdoptionHistory key={`adoption-${plan.id}`} plan={plan} workspace={workspace} locked={locked} onPlan={p=>showPlan(p)}/>}
         {workspace && <BatchPanel key={`batch-${workspace.project.id}`} projectId={workspace.project.id} plan={plan} target={target} locked={locked} executions={workspace.executions} onResults={refreshBatchResults}/>}
         {workspace && <ProjectHistory key={`history-${workspace.project.id}`} workspace={workspace} busy={locked} onPlan={p=>showPlan(p)}/>}
         <footer className="page-footer"><span>API Copilot <span className="footer-dot">·</span> Grounded in your contract.</span><span>Projects and execution history are saved locally.</span></footer>
